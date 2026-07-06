@@ -83,6 +83,16 @@ func (g *Generator) Generate() error {
 		return fmt.Errorf("generating deepcopy for public: %w", err)
 	}
 
+	fmt.Println("Generating schemas for internal APIs...")
+	if err := g.generateSchemas(g.inputDir); err != nil {
+		return fmt.Errorf("generating schemas for internal: %w", err)
+	}
+
+	fmt.Println("Generating schemas for public APIs...")
+	if err := g.generateSchemas(g.outputDir); err != nil {
+		return fmt.Errorf("generating schemas for public: %w", err)
+	}
+
 	return nil
 }
 

@@ -11,6 +11,7 @@ The generator:
 4. Preserves kubebuilder markers and other non-orlop comments
 5. Copies `groupversion_info.go` files as-is
 6. Generates DeepCopy methods for both internal and public APIs using controller-tools
+7. Generates OpenAPI v3 schemas embedded in Go code for both internal and public APIs
 
 ## Usage
 
@@ -91,11 +92,28 @@ type ObjectSpec struct {
 }
 ```
 
-## DeepCopy Generation
+## Generated Code
 
-The generator automatically runs controller-tools to generate DeepCopy, DeepCopyInto, and DeepCopyObject methods for all types in both the internal and public APIs. These methods are generated in `zz_generated.deepcopy.go` files within each package directory.
+The generator produces several generated files:
 
-The generated DeepCopy methods are required for types that implement `runtime.Object` and are used by the Kubernetes API machinery.
+### DeepCopy Methods (`zz_generated.deepcopy.go`)
+
+Automatically generates DeepCopy, DeepCopyInto, and DeepCopyObject methods for all types in both the internal and public APIs. These methods are required for types that implement `runtime.Object` and are used by the Kubernetes API machinery.
+
+### OpenAPI v3 Schemas (`zz_generated.schemas.go`)
+
+Generates embedded OpenAPI v3 schemas for all CRD types. The schemas are:
+- Embedded as YAML constants in Go code
+- Pre-parsed into structural schema objects at init time
+- Available as both raw YAML and parsed `schema.Structural` objects
+- Generated for both internal and public APIs
+
+The schemas include:
+- `{TypeName}SchemaYAML` - Raw OpenAPI v3 schema as YAML
+- `{TypeName}Schema` - Parsed structural schema
+- `{TypeName}Plural` - Plural resource name
+
+These schemas are used for server-side validation and pruning of unknown fields.
 
 ## Directory Structure
 

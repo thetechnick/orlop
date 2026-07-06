@@ -1,8 +1,9 @@
 # Generated public APIs
 apis/public/
 
-# Generated deepcopy files
+# Generated files
 apis/internal/**/zz_generated.deepcopy.go
+apis/internal/**/zz_generated.schemas.go
 
 # Binaries
 orlop-gen
