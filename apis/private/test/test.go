@@ -3,7 +3,7 @@ package test
 import (
 	"k8s.io/apimachinery/pkg/runtime"
 
-	v1 "github.com/thetechnick/orlop/apis/internal/test/v1"
+	v1 "github.com/thetechnick/orlop/apis/private/test/v1"
 )
 
 // AddToSchemes may be used to add all resources defined in the project to a Scheme.
