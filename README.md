@@ -117,6 +117,23 @@ The schemas include:
 
 These schemas are used for server-side validation and pruning of unknown fields.
 
+## Conversion Functions
+
+Automatic conversion function generation using `k8s.io/code-generator/cmd/conversion-gen` is not currently supported because both internal and public APIs use the same package name (`v1`). The conversion-gen tool expects packages with different names (e.g., internal unversioned vs external versioned).
+
+If conversion between internal and public types is needed, manual conversion functions can be written in non-generated files. These should follow the Kubernetes conversion patterns:
+
+```go
+// Convert_v1_Object_To_public_Object converts an internal Object to public Object
+func Convert_internal_Object_To_public_Object(in *internal.Object, out *public.Object, s conversion.Scope) error {
+    // Manual field-by-field conversion
+    out.ObjectMeta = in.ObjectMeta
+    // Only copy public fields
+    out.Spec.PublicField = in.Spec.PublicField
+    return nil
+}
+```
+
 ## Directory Structure
 
 ```

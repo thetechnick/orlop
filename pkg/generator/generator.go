@@ -122,6 +122,11 @@ func (g *Generator) Generate() error {
 		return fmt.Errorf("generating schemas for public: %w", err)
 	}
 
+	fmt.Println("Generating conversion functions...")
+	if err := g.generateConversions(); err != nil {
+		return fmt.Errorf("generating conversions: %w", err)
+	}
+
 	return nil
 }
 
