@@ -29,8 +29,12 @@ func New(opts Options) (*Server, error) {
 	// Create storage backend
 	store := storage.NewMemoryStore()
 
+	// Create resource registry
+	registry := NewResourceRegistry()
+	RegisterTestResources(registry)
+
 	// Setup router
-	router, err := setupRouter(store, opts.CORSOrigins)
+	router, err := setupRouter(store, registry, opts.CORSOrigins)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup router: %w", err)
 	}
