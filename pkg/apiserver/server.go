@@ -3,67 +3,128 @@ package apiserver
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/thetechnick/orlop/pkg/apiserver/conversion"
 	"github.com/thetechnick/orlop/pkg/apiserver/storage"
 )
 
-// Server represents the API server.
+// Server represents the API server with both private and public endpoints.
 type Server struct {
-	router     chi.Router
-	store      storage.ResourceStore
-	httpServer *http.Server
-	options    Options
+	privateRouter chi.Router
+	publicRouter  chi.Router
+	store         storage.ResourceStore
+	privateServer *http.Server
+	publicServer  *http.Server
+	options       Options
 }
 
 // Options holds server configuration.
 type Options struct {
-	Address     string
-	Port        int
-	CORSOrigins []string
+	Address        string
+	PrivatePort    int
+	PublicPort     int
+	CORSOrigins    []string
+	EnablePublicAPI bool
 }
 
 // New creates a new API server with the given options.
 func New(opts Options) (*Server, error) {
-	// Create storage backend
+	// Create shared storage backend
 	store := storage.NewMemoryStore()
 
-	// Create resource registry
-	registry := NewResourceRegistry()
-	RegisterTestResources(registry)
+	// Create private API
+	privateRegistry := NewResourceRegistry()
+	RegisterTestResources(privateRegistry)
 
-	// Setup router
-	router, err := setupRouter(store, registry, opts.CORSOrigins)
+	privateRouter, err := setupRouter(store, privateRegistry, opts.CORSOrigins)
 	if err != nil {
-		return nil, fmt.Errorf("failed to setup router: %w", err)
+		return nil, fmt.Errorf("failed to setup private router: %w", err)
 	}
 
-	// Create HTTP server
-	httpServer := &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", opts.Address, opts.Port),
-		Handler: router,
+	privateServer := &http.Server{
+		Addr:    fmt.Sprintf("%s:%d", opts.Address, opts.PrivatePort),
+		Handler: privateRouter,
 	}
 
-	return &Server{
-		router:     router,
-		store:      store,
-		httpServer: httpServer,
-		options:    opts,
-	}, nil
+	server := &Server{
+		privateRouter: privateRouter,
+		store:         store,
+		privateServer: privateServer,
+		options:       opts,
+	}
+
+	// Create public API if enabled
+	if opts.EnablePublicAPI {
+		publicRegistry := NewResourceRegistry()
+		RegisterPublicResources(publicRegistry)
+
+		converter := conversion.NewConverter()
+		publicRouter, err := setupConvertingRouter(store, publicRegistry, converter, opts.CORSOrigins)
+		if err != nil {
+			return nil, fmt.Errorf("failed to setup public router: %w", err)
+		}
+
+		publicServer := &http.Server{
+			Addr:    fmt.Sprintf("%s:%d", opts.Address, opts.PublicPort),
+			Handler: publicRouter,
+		}
+
+		server.publicRouter = publicRouter
+		server.publicServer = publicServer
+	}
+
+	return server, nil
 }
 
-// Run starts the API server.
+// Run starts the API server(s).
 func (s *Server) Run() error {
-	return s.httpServer.ListenAndServe()
+	// Start private API server in goroutine
+	go func() {
+		log.Printf("Private API server listening on %s", s.privateServer.Addr)
+		if err := s.privateServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("Private API server error: %v", err)
+		}
+	}()
+
+	// Start public API server if enabled
+	if s.options.EnablePublicAPI && s.publicServer != nil {
+		log.Printf("Public API server listening on %s", s.publicServer.Addr)
+		return s.publicServer.ListenAndServe()
+	}
+
+	// If public API is not enabled, block on a channel
+	select {}
 }
 
-// Shutdown gracefully shuts down the server.
+// Shutdown gracefully shuts down the server(s).
 func (s *Server) Shutdown(ctx context.Context) error {
-	return s.httpServer.Shutdown(ctx)
+	// Shutdown private server
+	if err := s.privateServer.Shutdown(ctx); err != nil {
+		return err
+	}
+
+	// Shutdown public server if enabled
+	if s.publicServer != nil {
+		if err := s.publicServer.Shutdown(ctx); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
-// Address returns the server's listen address.
-func (s *Server) Address() string {
-	return s.httpServer.Addr
+// PrivateAddress returns the private server's listen address.
+func (s *Server) PrivateAddress() string {
+	return s.privateServer.Addr
+}
+
+// PublicAddress returns the public server's listen address.
+func (s *Server) PublicAddress() string {
+	if s.publicServer != nil {
+		return s.publicServer.Addr
+	}
+	return ""
 }

@@ -15,13 +15,17 @@ import (
 
 func main() {
 	var (
-		address     string
-		port        int
-		corsOrigins string
+		address       string
+		privatePort   int
+		publicPort    int
+		corsOrigins   string
+		enablePublic  bool
 	)
 
 	flag.StringVar(&address, "address", "0.0.0.0", "address to bind to")
-	flag.IntVar(&port, "port", 8080, "port to listen on")
+	flag.IntVar(&privatePort, "private-port", 8080, "port for private API")
+	flag.IntVar(&publicPort, "public-port", 8081, "port for public API")
+	flag.BoolVar(&enablePublic, "enable-public-api", true, "enable public API server")
 	flag.StringVar(&corsOrigins, "cors-origins", "*", "comma-separated list of allowed CORS origins")
 	flag.Parse()
 
@@ -36,9 +40,11 @@ func main() {
 
 	// Create server
 	opts := apiserver.Options{
-		Address:     address,
-		Port:        port,
-		CORSOrigins: origins,
+		Address:        address,
+		PrivatePort:    privatePort,
+		PublicPort:     publicPort,
+		CORSOrigins:    origins,
+		EnablePublicAPI: enablePublic,
 	}
 
 	server, err := apiserver.New(opts)
@@ -52,7 +58,6 @@ func main() {
 
 	// Start server in goroutine
 	go func() {
-		log.Printf("Starting orlop-server on %s", server.Address())
 		if err := server.Run(); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}

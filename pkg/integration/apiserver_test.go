@@ -21,9 +21,11 @@ var (
 func TestMain(m *testing.M) {
 	// Start server on random port
 	opts := apiserver.Options{
-		Address:     "127.0.0.1",
-		Port:        8765, // Use fixed port for testing
-		CORSOrigins: []string{"*"},
+		Address:        "127.0.0.1",
+		PrivatePort:    8765, // Use fixed port for testing
+		PublicPort:     8766,
+		CORSOrigins:    []string{"*"},
+		EnablePublicAPI: false, // Disable public API for existing tests
 	}
 
 	var err error
@@ -32,7 +34,7 @@ func TestMain(m *testing.M) {
 		panic(fmt.Sprintf("Failed to create server: %v", err))
 	}
 
-	baseURL = fmt.Sprintf("http://%s", server.Address())
+	baseURL = fmt.Sprintf("http://%s", server.PrivateAddress())
 
 	// Start server in background
 	go func() {
