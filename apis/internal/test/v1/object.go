@@ -42,3 +42,5 @@ type ObjectStatus struct {
 	// +orlop:public
 	Conditions []string `json:"conditions,omitempty"`
 }
+
+func init() { register(&Object{}, &ObjectList{}) }

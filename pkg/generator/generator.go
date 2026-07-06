@@ -271,8 +271,17 @@ func (g *Generator) filterFile(file *ast.File) *ast.File {
 
 	var imports []ast.Decl
 	var typeDecls []ast.Decl
+	var funcDecls []ast.Decl
 
 	for _, decl := range file.Decls {
+		// Handle function declarations (including init functions)
+		if funcDecl, ok := decl.(*ast.FuncDecl); ok {
+			if funcDecl.Name.Name == "init" {
+				funcDecls = append(funcDecls, funcDecl)
+			}
+			continue
+		}
+
 		genDecl, ok := decl.(*ast.GenDecl)
 		if !ok {
 			continue
@@ -314,6 +323,7 @@ func (g *Generator) filterFile(file *ast.File) *ast.File {
 
 	newFile.Imports = file.Imports
 	newFile.Decls = append(imports, typeDecls...)
+	newFile.Decls = append(newFile.Decls, funcDecls...)
 	return newFile
 }
 

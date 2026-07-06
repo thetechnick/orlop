@@ -10,8 +10,9 @@ The generator:
 3. Generates cleaned types in `apis/public` maintaining the same directory structure
 4. Preserves kubebuilder markers and other non-orlop comments
 5. Copies `groupversion_info.go` files as-is
-6. Generates DeepCopy methods for both internal and public APIs using controller-tools
-7. Generates OpenAPI v3 schemas embedded in Go code for both internal and public APIs
+6. Copies `init()` functions that register types into the scheme
+7. Generates DeepCopy methods for both internal and public APIs using controller-tools
+8. Generates OpenAPI v3 schemas embedded in Go code for both internal and public APIs
 
 ## Usage
 

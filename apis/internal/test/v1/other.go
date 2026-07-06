@@ -28,3 +28,5 @@ type OtherSpec struct {
 }
 
 type OtherStatus struct{}
+
+func init() { register(&Other{}, &OtherList{}) }
