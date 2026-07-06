@@ -175,6 +175,17 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
 
+	// Get existing object to compare spec
+	existing, err := h.store.Get(h.resourceType, namespace, name)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get existing object: %v", err))
+		}
+		return
+	}
+
 	// Parse request body as map for schema processing
 	var objMap map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&objMap); err != nil {
@@ -205,6 +216,14 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	accessor.SetNamespace(namespace)
 	accessor.SetName(name)
+
+	// Check if spec changed and increment generation if so
+	existingAccessor, _ := meta.Accessor(existing)
+	if specChanged(existing, obj) {
+		accessor.SetGeneration(existingAccessor.GetGeneration() + 1)
+	} else {
+		accessor.SetGeneration(existingAccessor.GetGeneration())
+	}
 
 	// Set GVK
 	obj.GetObjectKind().SetGroupVersionKind(h.gvk)
@@ -271,4 +290,19 @@ func writeError(w http.ResponseWriter, code int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(status)
+}
+
+// specChanged checks if the spec field has changed between two objects.
+func specChanged(old, new runtime.Object) bool {
+	oldJSON, _ := json.Marshal(old)
+	newJSON, _ := json.Marshal(new)
+
+	var oldMap, newMap map[string]interface{}
+	json.Unmarshal(oldJSON, &oldMap)
+	json.Unmarshal(newJSON, &newMap)
+
+	oldSpec, _ := json.Marshal(oldMap["spec"])
+	newSpec, _ := json.Marshal(newMap["spec"])
+
+	return string(oldSpec) != string(newSpec)
 }

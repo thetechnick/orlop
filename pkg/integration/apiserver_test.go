@@ -311,6 +311,11 @@ func TestStatusSubresource(t *testing.T) {
 	var created map[string]interface{}
 	json.Unmarshal([]byte(body), &created)
 	resourceVersion := created["metadata"].(map[string]interface{})["resourceVersion"].(string)
+	createdGeneration := int64(created["metadata"].(map[string]interface{})["generation"].(float64))
+
+	if createdGeneration != 1 {
+		t.Errorf("Expected generation 1 on create, got %d", createdGeneration)
+	}
 
 	// Update status
 	statusPayload := map[string]interface{}{
@@ -343,6 +348,12 @@ func TestStatusSubresource(t *testing.T) {
 		t.Error("Spec should not be modified by status update")
 	}
 
+	// Check that generation was NOT incremented for status update
+	statusGeneration := int64(updated["metadata"].(map[string]interface{})["generation"].(float64))
+	if statusGeneration != 1 {
+		t.Errorf("Expected generation to remain 1 after status update, got %d", statusGeneration)
+	}
+
 	// Cleanup
 	doRequest(t, "DELETE", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/%s", namespace, name), nil)
 }
@@ -370,6 +381,95 @@ func TestCORS(t *testing.T) {
 	if resp.Header.Get("Access-Control-Allow-Methods") == "" {
 		t.Error("Expected Access-Control-Allow-Methods header")
 	}
+}
+
+func TestGenerationTracking(t *testing.T) {
+	namespace := "default"
+	name := "test-generation"
+
+	// Create object
+	createPayload := map[string]interface{}{
+		"apiVersion": "test.orlop.thetechnick.ninja/v1",
+		"kind":       "Object",
+		"metadata": map[string]interface{}{
+			"name":      name,
+			"namespace": namespace,
+		},
+		"spec": map[string]interface{}{
+			"publicField":   "initial-value",
+			"internalField": "internal-value",
+			"nested": map[string]interface{}{
+				"publicField":   "nested-public",
+				"internalField": "nested-internal",
+			},
+		},
+	}
+
+	resp, body := doRequest(t, "POST", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", namespace), createPayload)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Expected status 201, got %d: %s", resp.StatusCode, body)
+	}
+
+	var created map[string]interface{}
+	json.Unmarshal([]byte(body), &created)
+
+	generation := int64(created["metadata"].(map[string]interface{})["generation"].(float64))
+	if generation != 1 {
+		t.Errorf("Expected generation 1 on create, got %d", generation)
+	}
+
+	// Update spec - generation should increment
+	resourceVersion := created["metadata"].(map[string]interface{})["resourceVersion"].(string)
+	updatePayload := map[string]interface{}{
+		"apiVersion": "test.orlop.thetechnick.ninja/v1",
+		"kind":       "Object",
+		"metadata": map[string]interface{}{
+			"name":            name,
+			"namespace":       namespace,
+			"resourceVersion": resourceVersion,
+		},
+		"spec": map[string]interface{}{
+			"publicField":   "updated-value",
+			"internalField": "internal-value",
+			"nested": map[string]interface{}{
+				"publicField":   "nested-public",
+				"internalField": "nested-internal",
+			},
+		},
+	}
+
+	resp, body = doRequest(t, "PUT", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/%s", namespace, name), updatePayload)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", resp.StatusCode, body)
+	}
+
+	var updated map[string]interface{}
+	json.Unmarshal([]byte(body), &updated)
+
+	generation = int64(updated["metadata"].(map[string]interface{})["generation"].(float64))
+	if generation != 2 {
+		t.Errorf("Expected generation 2 after spec update, got %d", generation)
+	}
+
+	// Update with same spec - generation should NOT increment
+	resourceVersion = updated["metadata"].(map[string]interface{})["resourceVersion"].(string)
+	updatePayload["metadata"].(map[string]interface{})["resourceVersion"] = resourceVersion
+
+	resp, body = doRequest(t, "PUT", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/%s", namespace, name), updatePayload)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", resp.StatusCode, body)
+	}
+
+	var updated2 map[string]interface{}
+	json.Unmarshal([]byte(body), &updated2)
+
+	generation = int64(updated2["metadata"].(map[string]interface{})["generation"].(float64))
+	if generation != 2 {
+		t.Errorf("Expected generation to remain 2 when spec unchanged, got %d", generation)
+	}
+
+	// Cleanup
+	doRequest(t, "DELETE", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/%s", namespace, name), nil)
 }
 
 func TestOtherResource(t *testing.T) {
