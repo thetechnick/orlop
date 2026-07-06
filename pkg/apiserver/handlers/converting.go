@@ -4,20 +4,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/thetechnick/orlop/pkg/apiserver/conversion"
 	"github.com/thetechnick/orlop/pkg/apiserver/schema"
 	"github.com/thetechnick/orlop/pkg/apiserver/storage"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"time"
-
-	"github.com/google/uuid"
 )
 
 // ConvertingResourceHandler wraps a ResourceHandler and performs conversions
@@ -160,8 +160,19 @@ func (h *ConvertingResourceHandler) Get(w http.ResponseWriter, r *http.Request) 
 func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 
+	// Parse label selector from query parameter
+	opts := storage.ListOptions{}
+	if labelSelector := r.URL.Query().Get("labelSelector"); labelSelector != "" {
+		selector, err := labels.Parse(labelSelector)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid label selector: %v", err))
+			return
+		}
+		opts.LabelSelector = selector
+	}
+
 	// Get private objects from storage
-	privateObjects, err := h.store.List(h.resourceType, namespace)
+	privateObjects, err := h.store.List(h.resourceType, namespace, opts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list objects: %v", err))
 		return

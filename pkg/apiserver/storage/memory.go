@@ -6,6 +6,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -71,7 +72,7 @@ func (s *MemoryStore) Get(resourceType, namespace, name string) (runtime.Object,
 }
 
 // List lists all resources in a namespace.
-func (s *MemoryStore) List(resourceType, namespace string) ([]runtime.Object, error) {
+func (s *MemoryStore) List(resourceType, namespace string, opts ListOptions) ([]runtime.Object, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -82,9 +83,23 @@ func (s *MemoryStore) List(resourceType, namespace string) ([]runtime.Object, er
 	}
 
 	for key, obj := range s.objects[resourceType] {
-		if namespace == "" || s.matchesNamespace(key, namespace) {
-			result = append(result, obj.DeepCopyObject())
+		// Filter by namespace
+		if namespace != "" && !s.matchesNamespace(key, namespace) {
+			continue
 		}
+
+		// Filter by label selector
+		if opts.LabelSelector != nil && !opts.LabelSelector.Empty() {
+			accessor, err := meta.Accessor(obj)
+			if err != nil {
+				continue
+			}
+			if !opts.LabelSelector.Matches(labels.Set(accessor.GetLabels())) {
+				continue
+			}
+		}
+
+		result = append(result, obj.DeepCopyObject())
 	}
 
 	return result, nil

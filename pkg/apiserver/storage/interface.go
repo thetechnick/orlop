@@ -1,8 +1,15 @@
 package storage
 
 import (
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 )
+
+// ListOptions contains options for listing resources.
+type ListOptions struct {
+	// LabelSelector filters resources by labels.
+	LabelSelector labels.Selector
+}
 
 // ResourceStore defines the interface for storing and retrieving resources.
 type ResourceStore interface {
@@ -14,7 +21,8 @@ type ResourceStore interface {
 
 	// List lists all resources in the given namespace.
 	// If namespace is empty, lists resources across all namespaces.
-	List(resourceType, namespace string) ([]runtime.Object, error)
+	// If opts.LabelSelector is provided, filters by labels.
+	List(resourceType, namespace string, opts ListOptions) ([]runtime.Object, error)
 
 	// Update updates an existing resource.
 	Update(resourceType, namespace, name string, obj runtime.Object) error

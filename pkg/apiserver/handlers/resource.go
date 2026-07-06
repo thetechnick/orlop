@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -133,7 +134,18 @@ func (h *ResourceHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 
-	objects, err := h.store.List(h.resourceType, namespace)
+	// Parse label selector from query parameter
+	opts := storage.ListOptions{}
+	if labelSelector := r.URL.Query().Get("labelSelector"); labelSelector != "" {
+		selector, err := labels.Parse(labelSelector)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid label selector: %v", err))
+			return
+		}
+		opts.LabelSelector = selector
+	}
+
+	objects, err := h.store.List(h.resourceType, namespace, opts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list objects: %v", err))
 		return

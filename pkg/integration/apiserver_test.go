@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -472,6 +475,143 @@ func TestGenerationTracking(t *testing.T) {
 
 	// Cleanup
 	doRequest(t, "DELETE", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/%s", namespace, name), nil)
+}
+
+func TestLabelSelector(t *testing.T) {
+	namespace := "default"
+
+	// Create objects with different labels
+	objects := []struct {
+		name   string
+		labels map[string]string
+	}{
+		{"obj-1", map[string]string{"env": "prod", "tier": "frontend"}},
+		{"obj-2", map[string]string{"env": "dev", "tier": "backend"}},
+		{"obj-3", map[string]string{"env": "prod", "tier": "backend"}},
+		{"obj-4", map[string]string{"env": "staging", "tier": "frontend"}},
+	}
+
+	// Create all objects
+	for _, obj := range objects {
+		createPayload := map[string]interface{}{
+			"apiVersion": "test.orlop.thetechnick.ninja/v1",
+			"kind":       "Object",
+			"metadata": map[string]interface{}{
+				"name":      obj.name,
+				"namespace": namespace,
+				"labels":    obj.labels,
+			},
+			"spec": map[string]interface{}{
+				"publicField":   "test",
+				"internalField": "internal",
+				"nested": map[string]interface{}{
+					"publicField":   "nested",
+					"internalField": "nested-internal",
+				},
+			},
+		}
+
+		resp, body := doRequest(t, "POST", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", namespace), createPayload)
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("Expected status 201, got %d: %s", resp.StatusCode, body)
+		}
+	}
+
+	// Test cases for label selectors
+	testCases := []struct {
+		name     string
+		selector string
+		expected []string
+	}{
+		{
+			name:     "Equality selector - env=prod",
+			selector: "env=prod",
+			expected: []string{"obj-1", "obj-3"},
+		},
+		{
+			name:     "Equality selector - tier=frontend",
+			selector: "tier=frontend",
+			expected: []string{"obj-1", "obj-4"},
+		},
+		{
+			name:     "Multiple selectors - env=prod,tier=backend",
+			selector: "env=prod,tier=backend",
+			expected: []string{"obj-3"},
+		},
+		{
+			name:     "Inequality selector - env!=prod",
+			selector: "env!=prod",
+			expected: []string{"obj-2", "obj-4"},
+		},
+		{
+			name:     "Set-based selector - env in (prod,staging)",
+			selector: "env in (prod,staging)",
+			expected: []string{"obj-1", "obj-3", "obj-4"},
+		},
+		{
+			name:     "Set-based selector - tier notin (frontend)",
+			selector: "tier notin (frontend)",
+			expected: []string{"obj-2", "obj-3"},
+		},
+		{
+			name:     "Empty selector",
+			selector: "",
+			expected: []string{"obj-1", "obj-2", "obj-3", "obj-4"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", namespace)
+			if tc.selector != "" {
+				path += "?labelSelector=" + url.QueryEscape(tc.selector)
+			}
+
+			resp, body := doRequest(t, "GET", path, nil)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("Expected status 200, got %d: %s", resp.StatusCode, body)
+			}
+
+			var list map[string]interface{}
+			json.Unmarshal([]byte(body), &list)
+			items := list["items"].([]interface{})
+
+			// Extract names from results
+			var resultNames []string
+			for _, item := range items {
+				itemMap := item.(map[string]interface{})
+				metadata := itemMap["metadata"].(map[string]interface{})
+				resultNames = append(resultNames, metadata["name"].(string))
+			}
+
+			// Sort both slices for comparison
+			sort.Strings(resultNames)
+			sort.Strings(tc.expected)
+
+			if !reflect.DeepEqual(resultNames, tc.expected) {
+				t.Errorf("Expected %v, got %v", tc.expected, resultNames)
+			}
+		})
+	}
+
+	// Test invalid label selector
+	t.Run("Invalid label selector", func(t *testing.T) {
+		path := fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", namespace)
+		path += "?labelSelector=" + url.QueryEscape("invalid!selector")
+		resp, body := doRequest(t, "GET", path, nil)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected status 400 for invalid selector, got %d: %s", resp.StatusCode, body)
+		}
+
+		if !contains(body, "invalid label selector") {
+			t.Errorf("Expected error message about invalid label selector, got: %s", body)
+		}
+	})
+
+	// Cleanup
+	for _, obj := range objects {
+		doRequest(t, "DELETE", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/%s", namespace, obj.name), nil)
+	}
 }
 
 func TestOtherResource(t *testing.T) {
