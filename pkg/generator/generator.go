@@ -10,6 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"sigs.k8s.io/controller-tools/pkg/deepcopy"
+	"sigs.k8s.io/controller-tools/pkg/genall"
+	"sigs.k8s.io/controller-tools/pkg/loader"
+	"sigs.k8s.io/controller-tools/pkg/markers"
 )
 
 type Generator struct {
@@ -66,6 +71,16 @@ func (g *Generator) Generate() error {
 		if err := g.processFile(path, outputPath); err != nil {
 			return fmt.Errorf("processing %s: %w", path, err)
 		}
+	}
+
+	fmt.Println("Generating deepcopy methods for internal APIs...")
+	if err := g.generateDeepCopy(g.inputDir); err != nil {
+		return fmt.Errorf("generating deepcopy for internal: %w", err)
+	}
+
+	fmt.Println("Generating deepcopy methods for public APIs...")
+	if err := g.generateDeepCopy(g.outputDir); err != nil {
+		return fmt.Errorf("generating deepcopy for public: %w", err)
 	}
 
 	return nil
@@ -392,6 +407,43 @@ func (g *Generator) getTypeName(expr ast.Expr) string {
 	default:
 		return ""
 	}
+}
+
+func (g *Generator) generateDeepCopy(rootPath string) error {
+	registry := &markers.Registry{}
+	gen := deepcopy.Generator{
+		HeaderFile: "hack/boilerplate.go.txt",
+	}
+
+	if err := gen.RegisterMarkers(registry); err != nil {
+		return fmt.Errorf("failed to register markers: %w", err)
+	}
+
+	collector := &markers.Collector{Registry: registry}
+
+	absPath, err := filepath.Abs(rootPath)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	roots, err := loader.LoadRoots(absPath + "/...")
+	if err != nil {
+		return fmt.Errorf("failed to load packages: %w", err)
+	}
+
+	ctx := &genall.GenerationContext{
+		Collector:  collector,
+		Roots:      roots,
+		Checker:    &loader.TypeChecker{},
+		OutputRule: genall.OutputArtifacts{},
+		InputRule:  genall.InputFromFileSystem,
+	}
+
+	if err := gen.Generate(ctx); err != nil {
+		return fmt.Errorf("failed to generate deepcopy: %w", err)
+	}
+
+	return nil
 }
 
 func filterCommentsKeepNonOrlop(commentGroup *ast.CommentGroup) *ast.CommentGroup {

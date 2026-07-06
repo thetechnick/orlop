@@ -10,6 +10,7 @@ The generator:
 3. Generates cleaned types in `apis/public` maintaining the same directory structure
 4. Preserves kubebuilder markers and other non-orlop comments
 5. Copies `groupversion_info.go` files as-is
+6. Generates DeepCopy methods for both internal and public APIs using controller-tools
 
 ## Usage
 
@@ -90,13 +91,11 @@ type ObjectSpec struct {
 }
 ```
 
-## Integration with controller-tools
+## DeepCopy Generation
 
-The generated public APIs can be used with controller-gen to generate deepcopy methods, CRDs, etc:
+The generator automatically runs controller-tools to generate DeepCopy, DeepCopyInto, and DeepCopyObject methods for all types in both the internal and public APIs. These methods are generated in `zz_generated.deepcopy.go` files within each package directory.
 
-```bash
-controller-gen object:headerFile=hack/boilerplate.go.txt paths="./apis/public/..."
-```
+The generated DeepCopy methods are required for types that implement `runtime.Object` and are used by the Kubernetes API machinery.
 
 ## Directory Structure
 

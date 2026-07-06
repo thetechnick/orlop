@@ -1,7 +1,11 @@
 # Generated public APIs
 apis/public/
 
+# Generated deepcopy files
+apis/internal/**/zz_generated.deepcopy.go
+
 # Binaries
+orlop-gen
 bin/
 *.exe
 *.dll
