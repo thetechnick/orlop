@@ -51,7 +51,24 @@ func (r *ResourceRegistry) Register(info ResourceInfo) {
 }
 
 // Resources returns all registered resources.
-func (r *ResourceRegistry) Resources() []ResourceInfo {
+func (r *ResourceRegistry) Resources() []handlers.ResourceInfo {
+	// Convert to handlers.ResourceInfo to avoid import cycles
+	result := make([]handlers.ResourceInfo, len(r.resources))
+	for i, res := range r.resources {
+		result[i] = handlers.ResourceInfo{
+			GVK:            res.GVK,
+			Plural:         res.Plural,
+			SchemaYAML:     res.SchemaYAML,
+			NewObjectFunc:  res.NewObjectFunc,
+			NewListFunc:    res.NewListFunc,
+			PrivateNewFunc: res.PrivateNewFunc,
+		}
+	}
+	return result
+}
+
+// GetResources returns the internal resource list.
+func (r *ResourceRegistry) GetResources() []ResourceInfo {
 	return r.resources
 }
 

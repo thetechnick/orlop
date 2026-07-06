@@ -614,6 +614,177 @@ func TestLabelSelector(t *testing.T) {
 	}
 }
 
+func TestDiscoveryAPIGroupList(t *testing.T) {
+	resp, body := doRequest(t, "GET", "/apis", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", resp.StatusCode, body)
+	}
+
+	var groupList map[string]interface{}
+	if err := json.Unmarshal([]byte(body), &groupList); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+
+	// Check that we have the test.orlop.thetechnick.ninja group
+	groups := groupList["groups"].([]interface{})
+	found := false
+	for _, g := range groups {
+		group := g.(map[string]interface{})
+		if group["name"] == "test.orlop.thetechnick.ninja" {
+			found = true
+			// Check that it has v1 version
+			versions := group["versions"].([]interface{})
+			if len(versions) == 0 {
+				t.Error("Expected at least one version")
+			}
+			v := versions[0].(map[string]interface{})
+			if v["version"] != "v1" {
+				t.Errorf("Expected version v1, got %s", v["version"])
+			}
+			break
+		}
+	}
+
+	if !found {
+		t.Error("Expected test.orlop.thetechnick.ninja group not found")
+	}
+}
+
+func TestDiscoveryAPIGroup(t *testing.T) {
+	resp, body := doRequest(t, "GET", "/apis/test.orlop.thetechnick.ninja", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", resp.StatusCode, body)
+	}
+
+	var group map[string]interface{}
+	if err := json.Unmarshal([]byte(body), &group); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+
+	// Check group name
+	if group["name"] != "test.orlop.thetechnick.ninja" {
+		t.Errorf("Expected group name test.orlop.thetechnick.ninja, got %s", group["name"])
+	}
+
+	// Check versions
+	versions := group["versions"].([]interface{})
+	if len(versions) == 0 {
+		t.Error("Expected at least one version")
+	}
+}
+
+func TestDiscoveryAPIResourceList(t *testing.T) {
+	resp, body := doRequest(t, "GET", "/apis/test.orlop.thetechnick.ninja/v1", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", resp.StatusCode, body)
+	}
+
+	var resourceList map[string]interface{}
+	if err := json.Unmarshal([]byte(body), &resourceList); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+
+	// Check groupVersion
+	if resourceList["groupVersion"] != "test.orlop.thetechnick.ninja/v1" {
+		t.Errorf("Expected groupVersion test.orlop.thetechnick.ninja/v1, got %s", resourceList["groupVersion"])
+	}
+
+	// Check resources (field is called "resources" in JSON, not "apiResources")
+	if resourceList["resources"] == nil {
+		t.Fatalf("resources is nil. Full response: %s", body)
+	}
+	resources := resourceList["resources"].([]interface{})
+	if len(resources) == 0 {
+		t.Error("Expected at least one resource")
+	}
+
+	// Find objects resource
+	foundObjects := false
+	foundObjectsStatus := false
+	for _, r := range resources {
+		res := r.(map[string]interface{})
+		if res["name"] == "objects" {
+			foundObjects = true
+			if res["kind"] != "Object" {
+				t.Errorf("Expected kind Object, got %s", res["kind"])
+			}
+			if res["namespaced"] != true {
+				t.Error("Expected namespaced to be true")
+			}
+		}
+		if res["name"] == "objects/status" {
+			foundObjectsStatus = true
+		}
+	}
+
+	if !foundObjects {
+		t.Error("Expected objects resource not found")
+	}
+	if !foundObjectsStatus {
+		t.Error("Expected objects/status subresource not found")
+	}
+}
+
+func TestDiscoveryOpenAPIV3(t *testing.T) {
+	resp, body := doRequest(t, "GET", "/openapi/v3", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", resp.StatusCode, body)
+	}
+
+	var openapi map[string]interface{}
+	if err := json.Unmarshal([]byte(body), &openapi); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+
+	// Check paths
+	paths := openapi["paths"].(map[string]interface{})
+	if len(paths) == 0 {
+		t.Error("Expected at least one path")
+	}
+
+	// Check for test group/version
+	key := "apis/test.orlop.thetechnick.ninja/v1"
+	if _, ok := paths[key]; !ok {
+		t.Errorf("Expected path %s not found", key)
+	}
+}
+
+func TestDiscoveryOpenAPIV3GroupVersion(t *testing.T) {
+	resp, body := doRequest(t, "GET", "/openapi/v3/apis/test.orlop.thetechnick.ninja/v1", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", resp.StatusCode, body)
+	}
+
+	var spec map[string]interface{}
+	if err := json.Unmarshal([]byte(body), &spec); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+
+	// Check OpenAPI version
+	if spec["openapi"] != "3.0.0" {
+		t.Errorf("Expected openapi 3.0.0, got %s", spec["openapi"])
+	}
+
+	// Check info
+	info := spec["info"].(map[string]interface{})
+	if info["version"] != "v1" {
+		t.Errorf("Expected version v1, got %s", info["version"])
+	}
+
+	// Check components and schemas
+	components := spec["components"].(map[string]interface{})
+	schemas := components["schemas"].(map[string]interface{})
+	if len(schemas) == 0 {
+		t.Error("Expected at least one schema")
+	}
+
+	// Check paths
+	paths := spec["paths"].(map[string]interface{})
+	if len(paths) == 0 {
+		t.Error("Expected at least one path")
+	}
+}
+
 func TestOtherResource(t *testing.T) {
 	namespace := "default"
 	name := "test-other"

@@ -2,6 +2,7 @@ package apiserver
 
 import (
 	"fmt"
+	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/thetechnick/orlop/pkg/apiserver/conversion"
@@ -19,18 +20,32 @@ func setupRouter(store storage.ResourceStore, registry *ResourceRegistry, corsOr
 		AllowedOrigins: corsOrigins,
 	}))
 
+	// Create discovery handler
+	discoveryHandler := handlers.NewDiscoveryHandler(registry)
+
+	// Discovery endpoints (must be registered BEFORE resource routes to avoid shadowing)
+	r.Get("/apis", discoveryHandler.APIGroupList)
+	r.Get("/openapi/v3", discoveryHandler.OpenAPIV3)
+
 	// Group resources by GroupVersion
 	gvResources := make(map[string][]ResourceInfo)
-	for _, res := range registry.Resources() {
+	for _, res := range registry.GetResources() {
 		gv := fmt.Sprintf("%s/%s", res.GVK.Group, res.GVK.Version)
 		gvResources[gv] = append(gvResources[gv], res)
 	}
 
 	// Setup routes for each GroupVersion
 	for gv, resources := range gvResources {
+		group := resources[0].GVK.Group
+		version := resources[0].GVK.Version
 		apiPath := "/apis/" + gv
 
 		r.Route(apiPath, func(r chi.Router) {
+			// Discovery endpoint for this specific group/version (before namespaced routes)
+			r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+				discoveryHandler.APIResourceList(w, req, group, version)
+			})
+
 			r.Route("/namespaces/{namespace}", func(r chi.Router) {
 				// Register routes for each resource
 				for _, res := range resources {
@@ -54,6 +69,16 @@ func setupRouter(store storage.ResourceStore, registry *ResourceRegistry, corsOr
 				}
 			})
 		})
+
+		// Per-group discovery endpoint
+		r.Get("/apis/"+group, func(w http.ResponseWriter, req *http.Request) {
+			discoveryHandler.APIGroup(w, req, group)
+		})
+
+		// OpenAPI v3 per-group-version endpoint
+		r.Get("/openapi/v3/apis/"+gv, func(w http.ResponseWriter, req *http.Request) {
+			discoveryHandler.OpenAPIV3GroupVersion(w, req, group, version)
+		})
 	}
 
 	return r, nil
@@ -68,18 +93,32 @@ func setupConvertingRouter(store storage.ResourceStore, registry *ResourceRegist
 		AllowedOrigins: corsOrigins,
 	}))
 
+	// Create discovery handler
+	discoveryHandler := handlers.NewDiscoveryHandler(registry)
+
+	// Discovery endpoints (must be registered BEFORE resource routes to avoid shadowing)
+	r.Get("/apis", discoveryHandler.APIGroupList)
+	r.Get("/openapi/v3", discoveryHandler.OpenAPIV3)
+
 	// Group resources by GroupVersion
 	gvResources := make(map[string][]ResourceInfo)
-	for _, res := range registry.Resources() {
+	for _, res := range registry.GetResources() {
 		gv := fmt.Sprintf("%s/%s", res.GVK.Group, res.GVK.Version)
 		gvResources[gv] = append(gvResources[gv], res)
 	}
 
 	// Setup routes for each GroupVersion
 	for gv, resources := range gvResources {
+		group := resources[0].GVK.Group
+		version := resources[0].GVK.Version
 		apiPath := "/apis/" + gv
 
 		r.Route(apiPath, func(r chi.Router) {
+			// Discovery endpoint for this specific group/version (before namespaced routes)
+			r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+				discoveryHandler.APIResourceList(w, req, group, version)
+			})
+
 			r.Route("/namespaces/{namespace}", func(r chi.Router) {
 				// Register routes for each resource
 				for _, res := range resources {
@@ -103,6 +142,16 @@ func setupConvertingRouter(store storage.ResourceStore, registry *ResourceRegist
 					r.Put("/"+plural+"/{name}/status", handler.UpdateStatus)
 				}
 			})
+		})
+
+		// Per-group discovery endpoint
+		r.Get("/apis/"+group, func(w http.ResponseWriter, req *http.Request) {
+			discoveryHandler.APIGroup(w, req, group)
+		})
+
+		// OpenAPI v3 per-group-version endpoint
+		r.Get("/openapi/v3/apis/"+gv, func(w http.ResponseWriter, req *http.Request) {
+			discoveryHandler.OpenAPIV3GroupVersion(w, req, group, version)
 		})
 	}
 

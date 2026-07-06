@@ -1,0 +1,336 @@
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/yaml"
+)
+
+// ResourceInfo describes a single API resource type (duplicated to avoid import cycle).
+type ResourceInfo struct {
+	GVK            runtimeschema.GroupVersionKind
+	Plural         string
+	SchemaYAML     string
+	NewObjectFunc  func() runtime.Object
+	NewListFunc    func() runtime.Object
+	PrivateNewFunc func() runtime.Object
+}
+
+// ResourceProvider provides access to registered resources.
+type ResourceProvider interface {
+	Resources() []ResourceInfo
+}
+
+// DiscoveryHandler handles API discovery requests.
+type DiscoveryHandler struct {
+	resources []ResourceInfo
+}
+
+// NewDiscoveryHandler creates a new discovery handler.
+func NewDiscoveryHandler(provider ResourceProvider) *DiscoveryHandler {
+	return &DiscoveryHandler{
+		resources: provider.Resources(),
+	}
+}
+
+// APIGroupList handles GET /apis
+// Returns the list of API groups available.
+func (h *DiscoveryHandler) APIGroupList(w http.ResponseWriter, r *http.Request) {
+	groups := make(map[string]*metav1.APIGroup)
+
+	// Collect unique groups and their versions
+	for _, res := range h.resources {
+		group := res.GVK.Group
+		version := res.GVK.Version
+
+		if _, exists := groups[group]; !exists {
+			groups[group] = &metav1.APIGroup{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "APIGroup",
+					APIVersion: "v1",
+				},
+				Name:     group,
+				Versions: []metav1.GroupVersionForDiscovery{},
+			}
+		}
+
+		// Add version if not already present
+		versionExists := false
+		for _, v := range groups[group].Versions {
+			if v.Version == version {
+				versionExists = true
+				break
+			}
+		}
+
+		if !versionExists {
+			groups[group].Versions = append(groups[group].Versions, metav1.GroupVersionForDiscovery{
+				GroupVersion: group + "/" + version,
+				Version:      version,
+			})
+		}
+
+		// Set preferred version (first one)
+		if len(groups[group].Versions) == 1 {
+			groups[group].PreferredVersion = groups[group].Versions[0]
+		}
+	}
+
+	// Convert map to list
+	groupList := &metav1.APIGroupList{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "APIGroupList",
+			APIVersion: "v1",
+		},
+		Groups: make([]metav1.APIGroup, 0, len(groups)),
+	}
+
+	for _, group := range groups {
+		groupList.Groups = append(groupList.Groups, *group)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(groupList)
+}
+
+// APIGroup handles GET /apis/{group}
+// Returns the list of versions for a specific API group.
+func (h *DiscoveryHandler) APIGroup(w http.ResponseWriter, r *http.Request, group string) {
+	apiGroup := &metav1.APIGroup{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "APIGroup",
+			APIVersion: "v1",
+		},
+		Name:     group,
+		Versions: []metav1.GroupVersionForDiscovery{},
+	}
+
+	// Collect versions for this group
+	versions := make(map[string]bool)
+	for _, res := range h.resources {
+		if res.GVK.Group == group {
+			version := res.GVK.Version
+			if !versions[version] {
+				versions[version] = true
+				apiGroup.Versions = append(apiGroup.Versions, metav1.GroupVersionForDiscovery{
+					GroupVersion: group + "/" + version,
+					Version:      version,
+				})
+			}
+		}
+	}
+
+	if len(apiGroup.Versions) == 0 {
+		writeError(w, http.StatusNotFound, "group not found")
+		return
+	}
+
+	// Set preferred version (first one)
+	apiGroup.PreferredVersion = apiGroup.Versions[0]
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(apiGroup)
+}
+
+// APIResourceList handles GET /apis/{group}/{version}
+// Returns the list of resources for a specific API group version.
+func (h *DiscoveryHandler) APIResourceList(w http.ResponseWriter, r *http.Request, group, version string) {
+	resourceList := &metav1.APIResourceList{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "APIResourceList",
+			APIVersion: "v1",
+		},
+		GroupVersion: group + "/" + version,
+		APIResources: []metav1.APIResource{},
+	}
+
+	// Find resources for this group/version
+	for _, res := range h.resources {
+		if res.GVK.Group == group && res.GVK.Version == version {
+			resource := metav1.APIResource{
+				Name:       res.Plural,
+				Kind:       res.GVK.Kind,
+				Namespaced: true,
+				Verbs:      metav1.Verbs{"create", "delete", "get", "list", "patch", "update", "watch"},
+			}
+
+			// Add main resource
+			resourceList.APIResources = append(resourceList.APIResources, resource)
+
+			// Add status subresource
+			statusResource := metav1.APIResource{
+				Name:       res.Plural + "/status",
+				Kind:       res.GVK.Kind,
+				Namespaced: true,
+				Verbs:      metav1.Verbs{"get", "patch", "update"},
+			}
+			resourceList.APIResources = append(resourceList.APIResources, statusResource)
+		}
+	}
+
+	if len(resourceList.APIResources) == 0 {
+		writeError(w, http.StatusNotFound, "group version not found")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(resourceList)
+}
+
+// OpenAPIV3 handles GET /openapi/v3
+// Returns the list of available OpenAPI v3 group versions.
+func (h *DiscoveryHandler) OpenAPIV3(w http.ResponseWriter, r *http.Request) {
+	// Build a list of group versions
+	groupVersions := make(map[string]bool)
+	for _, res := range h.resources {
+		gv := res.GVK.Group + "/" + res.GVK.Version
+		groupVersions[gv] = true
+	}
+
+	// Convert to OpenAPI v3 discovery format
+	paths := make(map[string]interface{})
+	for gv := range groupVersions {
+		paths["apis/"+gv] = map[string]interface{}{
+			"serverRelativeURL": "/openapi/v3/apis/" + gv,
+		}
+	}
+
+	response := map[string]interface{}{
+		"paths": paths,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// OpenAPIV3GroupVersion handles GET /openapi/v3/apis/{group}/{version}
+// Returns the OpenAPI v3 schema for a specific group version.
+func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.Request, group, version string) {
+	gv := runtimeschema.GroupVersion{Group: group, Version: version}
+
+	// Build OpenAPI v3 document
+	spec := map[string]interface{}{
+		"openapi": "3.0.0",
+		"info": map[string]interface{}{
+			"title":   group + "/" + version,
+			"version": version,
+		},
+		"paths":      map[string]interface{}{},
+		"components": map[string]interface{}{},
+	}
+
+	schemas := make(map[string]interface{})
+
+	// Add each resource schema
+	for _, res := range h.resources {
+		if res.GVK.Group != group || res.GVK.Version != version {
+			continue
+		}
+
+		// Parse the schema YAML to get the JSON schema
+		var schemaObj map[string]interface{}
+		if err := yaml.Unmarshal([]byte(res.SchemaYAML), &schemaObj); err != nil {
+			// Skip schemas that don't parse
+			continue
+		}
+
+		// Add schema to components
+		schemaName := gv.String() + "." + res.GVK.Kind
+		schemas[schemaName] = schemaObj
+
+		// Add path entries for this resource
+		basePath := "/apis/" + group + "/" + version + "/namespaces/{namespace}/" + res.Plural
+		paths := spec["paths"].(map[string]interface{})
+
+		// Collection operations
+		paths[basePath] = map[string]interface{}{
+			"get": map[string]interface{}{
+				"description": "list " + res.Plural,
+				"responses": map[string]interface{}{
+					"200": map[string]interface{}{
+						"description": "OK",
+					},
+				},
+			},
+			"post": map[string]interface{}{
+				"description": "create a " + res.GVK.Kind,
+				"responses": map[string]interface{}{
+					"201": map[string]interface{}{
+						"description": "Created",
+					},
+				},
+			},
+		}
+
+		// Individual resource operations
+		itemPath := basePath + "/{name}"
+		paths[itemPath] = map[string]interface{}{
+			"get": map[string]interface{}{
+				"description": "read the specified " + res.GVK.Kind,
+				"responses": map[string]interface{}{
+					"200": map[string]interface{}{
+						"description": "OK",
+					},
+				},
+			},
+			"put": map[string]interface{}{
+				"description": "replace the specified " + res.GVK.Kind,
+				"responses": map[string]interface{}{
+					"200": map[string]interface{}{
+						"description": "OK",
+					},
+				},
+			},
+			"delete": map[string]interface{}{
+				"description": "delete a " + res.GVK.Kind,
+				"responses": map[string]interface{}{
+					"200": map[string]interface{}{
+						"description": "OK",
+					},
+				},
+			},
+		}
+
+		// Status subresource
+		statusPath := itemPath + "/status"
+		paths[statusPath] = map[string]interface{}{
+			"get": map[string]interface{}{
+				"description": "read status of the specified " + res.GVK.Kind,
+				"responses": map[string]interface{}{
+					"200": map[string]interface{}{
+						"description": "OK",
+					},
+				},
+			},
+			"put": map[string]interface{}{
+				"description": "replace status of the specified " + res.GVK.Kind,
+				"responses": map[string]interface{}{
+					"200": map[string]interface{}{
+						"description": "OK",
+					},
+				},
+			},
+		}
+	}
+
+	if len(schemas) == 0 {
+		writeError(w, http.StatusNotFound, "group version not found")
+		return
+	}
+
+	spec["components"] = map[string]interface{}{
+		"schemas": schemas,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(spec)
+}
