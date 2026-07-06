@@ -36,6 +36,11 @@ func NewGenerator(inputDir, outputDir string) *Generator {
 }
 
 func (g *Generator) Generate() error {
+	// Create README in output directory
+	if err := g.generateReadme(); err != nil {
+		return fmt.Errorf("generating README: %w", err)
+	}
+
 	var files []string
 	var aggregatorFiles []string
 
@@ -315,7 +320,24 @@ func (g *Generator) processAggregatorFile(inputPath, outputPath string) error {
 		return err
 	}
 
-	return os.WriteFile(outputPath, buf.Bytes(), 0644)
+	// Add localSchemeBuilder by text manipulation (easier than AST manipulation for formatting)
+	content := buf.String()
+	content = strings.Replace(content,
+		"var AddToSchemes runtime.SchemeBuilder",
+		"var (\n\t// AddToSchemes may be used to add all resources defined in the project to a Scheme.\n\tAddToSchemes runtime.SchemeBuilder",
+		1)
+
+	// Close the var block and add localSchemeBuilder
+	content = strings.Replace(content,
+		"// AddToSchemes may be used to add all resources defined in the project to a Scheme.\n\tAddToSchemes runtime.SchemeBuilder = runtime.SchemeBuilder{",
+		"AddToSchemes runtime.SchemeBuilder = runtime.SchemeBuilder{",
+		1)
+	content = strings.Replace(content,
+		"\tv1.SchemeBuilder.AddToScheme,\n}",
+		"\tv1.SchemeBuilder.AddToScheme,\n\t}\n\n\t// localSchemeBuilder is used for registration of conversion functions\n\tlocalSchemeBuilder = &AddToSchemes\n)",
+		1)
+
+	return os.WriteFile(outputPath, []byte(content), 0644)
 }
 
 func (g *Generator) rewriteImports(file *ast.File) {
@@ -342,6 +364,7 @@ func (g *Generator) rewriteImports(file *ast.File) {
 		}
 	}
 }
+
 
 func (g *Generator) filterFile(file *ast.File) *ast.File {
 	newFile := &ast.File{
@@ -563,4 +586,52 @@ func filterCommentsKeepNonOrlop(commentGroup *ast.CommentGroup) *ast.CommentGrou
 	}
 
 	return &ast.CommentGroup{List: filtered}
+}
+
+func (g *Generator) generateReadme() error {
+	// Ensure output directory exists
+	if err := os.MkdirAll(g.outputDir, 0755); err != nil {
+		return err
+	}
+
+	readmeContent := `# Auto-Generated Public API
+
+**WARNING: This directory is auto-generated. Do not modify files manually.**
+
+This directory contains the public API types generated from the internal API definitions.
+All files in this directory are created by the orlop-gen code generator based on the
+source files in the internal API directory.
+
+## Regenerating
+
+To regenerate this directory, run:
+
+` + "```bash" + `
+make generate
+# or
+go run ./cmd/orlop-gen
+` + "```" + `
+
+Any manual changes will be lost when the generator is run again.
+
+## Source
+
+The source files are located in the internal API directory. To make changes:
+
+1. Modify the internal API types
+2. Add or update +orlop:public markers on fields that should be public
+3. Run the code generator to update this directory
+
+## Generated Files
+
+This directory contains:
+- Filtered API types based on +orlop:public markers
+- Generated DeepCopy methods (zz_generated.deepcopy.go)
+- Generated OpenAPI v3 schemas (zz_generated.schemas.go)
+- Generated conversion functions (zz_generated.conversion.go)
+- API version aggregator files with updated import paths
+`
+
+	readmePath := filepath.Join(g.outputDir, "README.md")
+	return os.WriteFile(readmePath, []byte(readmeContent), 0644)
 }
