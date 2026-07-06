@@ -11,8 +11,9 @@ The generator:
 4. Preserves kubebuilder markers and other non-orlop comments
 5. Copies `groupversion_info.go` files as-is
 6. Copies `init()` functions that register types into the scheme
-7. Generates DeepCopy methods for both internal and public APIs using controller-tools
-8. Generates OpenAPI v3 schemas embedded in Go code for both internal and public APIs
+7. Copies API version aggregator files (e.g., `test.go`) with updated import paths
+8. Generates DeepCopy methods for both internal and public APIs using controller-tools
+9. Generates OpenAPI v3 schemas embedded in Go code for both internal and public APIs
 
 ## Usage
 
@@ -122,15 +123,35 @@ These schemas are used for server-side validation and pruning of unknown fields.
 .
 ├── apis/
 │   ├── internal/          # Internal API definitions with +orlop:public markers
-│   │   └── test/v1/
+│   │   └── test/
+│   │       ├── test.go    # Version aggregator (SchemeBuilder)
+│   │       └── v1/        # v1 API types
 │   └── public/            # Generated public API (git-ignored recommended)
-│       └── test/v1/
+│       └── test/
+│           ├── test.go    # Generated aggregator with public imports
+│           └── v1/        # Filtered v1 API types
 ├── cmd/
 │   └── orlop-gen/         # Generator CLI
 ├── pkg/
 │   └── generator/         # Generator implementation
 └── Makefile
 ```
+
+## API Version Aggregator
+
+The generator copies aggregator files (like `test.go`) that combine multiple API versions into a single `SchemeBuilder`. Import paths are automatically rewritten to point to the public API:
+
+**Input** (`apis/internal/test/test.go`):
+```go
+import v1 "github.com/thetechnick/orlop/apis/internal/test/v1"
+```
+
+**Output** (`apis/public/test/test.go`):
+```go
+import v1 "github.com/thetechnick/orlop/apis/public/test/v1"
+```
+
+This allows consumers of the public API to register all types using `test.AddToScheme(scheme)`.
 
 ## License
 

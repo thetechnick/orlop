@@ -37,6 +37,7 @@ func NewGenerator(inputDir, outputDir string) *Generator {
 
 func (g *Generator) Generate() error {
 	var files []string
+	var aggregatorFiles []string
 
 	err := filepath.Walk(g.inputDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -47,7 +48,21 @@ func (g *Generator) Generate() error {
 			return nil
 		}
 
-		files = append(files, path)
+		// Check if this is an aggregator file (not in a versioned subdirectory)
+		relPath, err := filepath.Rel(g.inputDir, path)
+		if err != nil {
+			return err
+		}
+
+		// If the file is directly under a package directory (not in vX subdir)
+		// and not groupversion_info.go, it's likely an aggregator
+		dir := filepath.Dir(relPath)
+		if !strings.Contains(dir, string(filepath.Separator)+"v") && filepath.Base(path) != "groupversion_info.go" {
+			aggregatorFiles = append(aggregatorFiles, path)
+		} else {
+			files = append(files, path)
+		}
+
 		return nil
 	})
 	if err != nil {
@@ -70,6 +85,20 @@ func (g *Generator) Generate() error {
 
 		if err := g.processFile(path, outputPath); err != nil {
 			return fmt.Errorf("processing %s: %w", path, err)
+		}
+	}
+
+	// Process aggregator files after type files
+	for _, path := range aggregatorFiles {
+		relPath, err := filepath.Rel(g.inputDir, path)
+		if err != nil {
+			return err
+		}
+
+		outputPath := filepath.Join(g.outputDir, relPath)
+
+		if err := g.processAggregatorFile(path, outputPath); err != nil {
+			return fmt.Errorf("processing aggregator %s: %w", path, err)
 		}
 	}
 
@@ -261,6 +290,52 @@ func (g *Generator) processFile(inputPath, outputPath string) error {
 	}
 
 	return os.WriteFile(outputPath, buf.Bytes(), 0644)
+}
+
+func (g *Generator) processAggregatorFile(inputPath, outputPath string) error {
+	file, err := parser.ParseFile(g.fset, inputPath, nil, parser.ParseComments)
+	if err != nil {
+		return err
+	}
+
+	// Rewrite imports to point to public API
+	g.rewriteImports(file)
+
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+		return err
+	}
+
+	var buf bytes.Buffer
+	if err := format.Node(&buf, g.fset, file); err != nil {
+		return err
+	}
+
+	return os.WriteFile(outputPath, buf.Bytes(), 0644)
+}
+
+func (g *Generator) rewriteImports(file *ast.File) {
+	for _, decl := range file.Decls {
+		genDecl, ok := decl.(*ast.GenDecl)
+		if !ok || genDecl.Tok != token.IMPORT {
+			continue
+		}
+
+		for _, spec := range genDecl.Specs {
+			importSpec, ok := spec.(*ast.ImportSpec)
+			if !ok {
+				continue
+			}
+
+			// Get the import path without quotes
+			importPath := strings.Trim(importSpec.Path.Value, "\"")
+
+			// Replace /apis/internal/ with /apis/public/
+			if strings.Contains(importPath, "/apis/internal/") {
+				newPath := strings.Replace(importPath, "/apis/internal/", "/apis/public/", 1)
+				importSpec.Path.Value = "\"" + newPath + "\""
+			}
+		}
+	}
 }
 
 func (g *Generator) filterFile(file *ast.File) *ast.File {
