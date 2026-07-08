@@ -47,7 +47,8 @@ func main() {
 		EnablePublicAPI:  enablePublic,
 		PrivateResources: getPrivateResources(),
 		PublicResources:  getPublicResources(),
-		Scheme:           getScheme(),
+		PrivateScheme:    getPrivateScheme(),
+		PublicScheme:     getPublicScheme(),
 	}
 
 	server, err := apiserver.New(opts)

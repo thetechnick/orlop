@@ -13,70 +13,29 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// MemoryBackend provides shared state for all MemoryStore instances.
-type MemoryBackend struct {
-	resourceVersionCounter atomic.Int64
-	mu                     sync.RWMutex
-	watchers               map[string]*Watcher // resourceType -> Watcher
-}
-
-// NewMemoryBackend creates a new memory backend with shared resource version counter.
-func NewMemoryBackend() *MemoryBackend {
-	return &MemoryBackend{
-		watchers: make(map[string]*Watcher),
-	}
-}
-
-// NewStore creates a new MemoryStore for a specific resource type that shares
-// the resource version counter with other stores from this backend.
-func (b *MemoryBackend) NewStore(resourceType string, scheme *runtime.Scheme, gvk schema.GroupVersionKind) *MemoryStore {
+// NewMemoryStore creates a new MemoryStore for a specific resource type.
+// Each store has its own resource version counter and watcher.
+func NewMemoryStore(resourceType string, scheme *runtime.Scheme, gvk schema.GroupVersionKind) *MemoryStore {
 	return &MemoryStore{
-		backend:      b,
 		resourceType: resourceType,
 		objects:      make(map[string]client.Object),
 		scheme:       scheme,
 		gvk:          gvk,
+		watcher:      NewWatcher(50), // Buffer 50 events
 	}
-}
-
-// currentResourceVersion returns the current resource version.
-func (b *MemoryBackend) currentResourceVersion() string {
-	return fmt.Sprintf("%d", b.resourceVersionCounter.Load())
-}
-
-// GetWatcher returns the watcher for a resource type, creating one if needed.
-func (b *MemoryBackend) GetWatcher(resourceType string) *Watcher {
-	b.mu.RLock()
-	watcher, exists := b.watchers[resourceType]
-	b.mu.RUnlock()
-
-	if exists {
-		return watcher
-	}
-
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	// Double-check after acquiring write lock
-	if watcher, exists := b.watchers[resourceType]; exists {
-		return watcher
-	}
-
-	watcher = NewWatcher(50) // Buffer 50 events
-	b.watchers[resourceType] = watcher
-	return watcher
 }
 
 // MemoryStore implements ResourceStore using an in-memory map.
-// Each MemoryStore instance is for a specific resource type but shares
-// a resource version counter with other stores from the same backend.
+// Each MemoryStore instance is for a specific resource type and has its own
+// resource version counter and watcher.
 type MemoryStore struct {
-	mu           sync.RWMutex
-	backend      *MemoryBackend
-	resourceType string
-	objects      map[string]client.Object // namespace/name -> object
-	scheme       *runtime.Scheme          // For creating list objects
-	gvk          schema.GroupVersionKind  // For list metadata
+	mu                     sync.RWMutex
+	resourceType           string
+	objects                map[string]client.Object // namespace/name -> object
+	scheme                 *runtime.Scheme          // For creating list objects
+	gvk                    schema.GroupVersionKind  // For list metadata
+	resourceVersionCounter atomic.Int64             // Per-resource version counter
+	watcher                *Watcher                 // Per-resource watcher
 }
 
 // Create creates a new resource.
@@ -93,8 +52,8 @@ func (s *MemoryStore) Create(obj client.Object) error {
 		return errors.NewAlreadyExists(schema.GroupResource{Resource: s.resourceType}, name)
 	}
 
-	// Set resource version using shared counter
-	newVersion := s.backend.resourceVersionCounter.Add(1)
+	// Set resource version using store's counter
+	newVersion := s.resourceVersionCounter.Add(1)
 	if err := s.setResourceVersion(obj, newVersion); err != nil {
 		return err
 	}
@@ -102,7 +61,7 @@ func (s *MemoryStore) Create(obj client.Object) error {
 	s.objects[key] = obj.DeepCopyObject().(client.Object)
 
 	// Broadcast watch event
-	watcher := s.backend.GetWatcher(s.resourceType)
+	watcher := s.watcher
 	watcher.Broadcast(WatchEvent{
 		Type:            "ADDED",
 		Object:          obj.DeepCopyObject().(client.Object),
@@ -169,9 +128,14 @@ func (s *MemoryStore) List(opts client.ListOptions) (client.ObjectList, error) {
 	}
 
 	// Set list metadata
-	list.SetResourceVersion(s.backend.currentResourceVersion())
+	list.SetResourceVersion(s.currentResourceVersion())
 
 	return list, nil
+}
+
+// currentResourceVersion returns the current resource version for this store.
+func (s *MemoryStore) currentResourceVersion() string {
+	return fmt.Sprintf("%d", s.resourceVersionCounter.Load())
 }
 
 // Update updates an existing resource.
@@ -207,8 +171,8 @@ func (s *MemoryStore) Update(obj client.Object) error {
 		)
 	}
 
-	// Increment resource version using shared counter
-	newVersion := s.backend.resourceVersionCounter.Add(1)
+	// Increment resource version using store's counter
+	newVersion := s.resourceVersionCounter.Add(1)
 	if err := s.setResourceVersion(obj, newVersion); err != nil {
 		return err
 	}
@@ -216,7 +180,7 @@ func (s *MemoryStore) Update(obj client.Object) error {
 	s.objects[key] = obj.DeepCopyObject().(client.Object)
 
 	// Broadcast watch event
-	watcher := s.backend.GetWatcher(s.resourceType)
+	watcher := s.watcher
 	watcher.Broadcast(WatchEvent{
 		Type:            "MODIFIED",
 		Object:          obj.DeepCopyObject().(client.Object),
@@ -241,11 +205,11 @@ func (s *MemoryStore) Delete(namespace, name string) error {
 	delete(s.objects, key)
 
 	// Broadcast watch event (use current RV since delete doesn't change it)
-	watcher := s.backend.GetWatcher(s.resourceType)
+	watcher := s.watcher
 	watcher.Broadcast(WatchEvent{
 		Type:            "DELETED",
 		Object:          obj.DeepCopyObject().(client.Object),
-		ResourceVersion: s.backend.currentResourceVersion(),
+		ResourceVersion: s.currentResourceVersion(),
 	})
 
 	return nil
@@ -284,14 +248,9 @@ func (s *MemoryStore) setResourceVersion(obj runtime.Object, version int64) erro
 	return nil
 }
 
-// currentResourceVersion returns the current resource version of the backend.
-func (s *MemoryStore) currentResourceVersion() string {
-	return s.backend.currentResourceVersion()
-}
-
 // Watch starts watching for changes starting from the given resource version.
 func (s *MemoryStore) Watch(opts client.ListOptions, resourceVersion string) (<-chan WatchEvent, func(), error) {
-	watcher := s.backend.GetWatcher(s.resourceType)
+	watcher := s.watcher
 
 	// Subscribe to watch events
 	eventCh, id, err := watcher.Subscribe(resourceVersion)

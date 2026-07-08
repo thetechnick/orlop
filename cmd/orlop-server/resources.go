@@ -66,9 +66,16 @@ func getPublicResources() []apiserver.ResourceInfo {
 	}
 }
 
-// getScheme creates and returns a runtime.Scheme with the test types registered.
-func getScheme() *runtime.Scheme {
+// getPrivateScheme creates and returns a runtime.Scheme with private API types registered.
+func getPrivateScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	privatev1.AddToScheme(scheme)
+	return scheme
+}
+
+// getPublicScheme creates and returns a runtime.Scheme with public API types registered.
+func getPublicScheme() *runtime.Scheme {
+	scheme := runtime.NewScheme()
+	publicv1.AddToScheme(scheme)
 	return scheme
 }

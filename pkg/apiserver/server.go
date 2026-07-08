@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/thetechnick/orlop/pkg/apiserver/conversion"
-	"github.com/thetechnick/orlop/pkg/apiserver/storage"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -30,25 +29,23 @@ type Options struct {
 	EnablePublicAPI  bool
 	PrivateResources []ResourceInfo
 	PublicResources  []ResourceInfo
-	Scheme           *runtime.Scheme
+	PrivateScheme    *runtime.Scheme
+	PublicScheme     *runtime.Scheme
 }
 
 // New creates a new API server with the given options.
 func New(opts Options) (*Server, error) {
 	// Validate options
-	if opts.Scheme == nil {
-		return nil, fmt.Errorf("scheme is required")
+	if opts.PrivateScheme == nil {
+		return nil, fmt.Errorf("private scheme is required")
 	}
 	if len(opts.PrivateResources) == 0 {
 		return nil, fmt.Errorf("at least one private resource is required")
 	}
 
-	// Create shared memory backend for consistent resource versioning
-	backend := storage.NewMemoryBackend()
-
-	// Create private API registry with backend and scheme
+	// Create private API registry with scheme
 	// Registry will create stores for each registered resource
-	privateRegistry := NewResourceRegistry(backend, opts.Scheme)
+	privateRegistry := NewResourceRegistry(opts.PrivateScheme)
 	for _, res := range opts.PrivateResources {
 		privateRegistry.Register(res)
 	}
@@ -71,13 +68,15 @@ func New(opts Options) (*Server, error) {
 
 	// Create public API if enabled
 	if opts.EnablePublicAPI {
+		if opts.PublicScheme == nil {
+			return nil, fmt.Errorf("public scheme is required when EnablePublicAPI is true")
+		}
 		if len(opts.PublicResources) == 0 {
 			return nil, fmt.Errorf("public resources are required when EnablePublicAPI is true")
 		}
 
-		// Public API uses same backend and scheme, but different registry
-		// This allows sharing stores between public and private APIs
-		publicRegistry := NewResourceRegistry(backend, opts.Scheme)
+		// Public API uses separate scheme and registry
+		publicRegistry := NewResourceRegistry(opts.PublicScheme)
 		for _, res := range opts.PublicResources {
 			publicRegistry.Register(res)
 		}

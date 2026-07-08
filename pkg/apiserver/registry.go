@@ -35,16 +35,14 @@ type ResourceInfo struct {
 type ResourceRegistry struct {
 	resources []ResourceInfo
 	stores    map[string]storage.ResourceStore
-	backend   *storage.MemoryBackend
 	scheme    *runtime.Scheme
 }
 
 // NewResourceRegistry creates a new resource registry.
-func NewResourceRegistry(backend *storage.MemoryBackend, scheme *runtime.Scheme) *ResourceRegistry {
+func NewResourceRegistry(scheme *runtime.Scheme) *ResourceRegistry {
 	return &ResourceRegistry{
 		resources: []ResourceInfo{},
 		stores:    make(map[string]storage.ResourceStore),
-		backend:   backend,
 		scheme:    scheme,
 	}
 }
@@ -53,7 +51,7 @@ func NewResourceRegistry(backend *storage.MemoryBackend, scheme *runtime.Scheme)
 func (r *ResourceRegistry) Register(info ResourceInfo) {
 	r.resources = append(r.resources, info)
 	// Create store for this resource
-	r.stores[info.Plural] = r.backend.NewStore(info.Plural, r.scheme, info.GVK)
+	r.stores[info.Plural] = storage.NewMemoryStore(info.Plural, r.scheme, info.GVK)
 }
 
 // GetStore returns the store for a given resource plural name.
