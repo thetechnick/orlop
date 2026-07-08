@@ -18,7 +18,12 @@ func main() {
 	flag.StringVar(&outputDir, "output-dir", "apis/public", "output directory for public APIs")
 	flag.Parse()
 
-	gen := generator.NewGenerator(inputDir, outputDir)
+	gen, err := generator.NewGenerator(inputDir, outputDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
 	if err := gen.Generate(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

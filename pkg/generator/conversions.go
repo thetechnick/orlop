@@ -81,7 +81,7 @@ func (g *Generator) generateConversions() error {
 			// Check if corresponding internal package exists
 			internalPath := filepath.Join(g.inputDir, relPath)
 			if _, err := os.Stat(internalPath); err == nil {
-				pkgPath := "github.com/thetechnick/orlop/apis/public/" + strings.ReplaceAll(relPath, string(filepath.Separator), "/")
+				pkgPath := g.outputBasePath + "/" + strings.ReplaceAll(relPath, string(filepath.Separator), "/")
 				packagePaths = append(packagePaths, pkgPath)
 
 				// Create doc.go with conversion markers
@@ -119,7 +119,7 @@ func (g *Generator) createConversionDocFile(pkgDir, relPath string) error {
 	}
 
 	// Construct internal package import path
-	internalImportPath := "github.com/thetechnick/orlop/apis/private/" + strings.ReplaceAll(relPath, string(filepath.Separator), "/")
+	internalImportPath := g.inputBasePath + "/" + strings.ReplaceAll(relPath, string(filepath.Separator), "/")
 
 	docContent := fmt.Sprintf(`// +k8s:conversion-gen=%s
 // +k8s:conversion-gen-external-types=%s
@@ -171,9 +171,9 @@ func (g *Generator) runConversionGenLib(pkgPath string) error {
 	// - Convert_v1_Object_To_v1_Object (from internal v1 to internal v1)
 	// - Convert_v1_Object_To_v1_Object (from public v1 to public v1)
 	// We need to rename one set to avoid conflicts
-	if strings.Contains(pkgPath, "/apis/public/") {
+	if strings.HasPrefix(pkgPath, g.outputBasePath) {
 		// Calculate the actual file path
-		pkgRelPath := strings.TrimPrefix(pkgPath, "github.com/thetechnick/orlop/")
+		pkgRelPath := strings.TrimPrefix(pkgPath, g.modulePath+"/")
 		genFilePath := filepath.Join(projectRoot, pkgRelPath, genArgs.OutputFile)
 		fmt.Printf("  Post-processing %s to fix duplicate names...\n", genFilePath)
 		if err := g.fixDuplicateConversionNames(genFilePath); err != nil {

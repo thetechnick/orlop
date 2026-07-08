@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"go/ast"
@@ -18,21 +19,53 @@ import (
 )
 
 type Generator struct {
-	inputDir     string
-	outputDir    string
-	fset         *token.FileSet
-	publicTypes  map[string]bool
+	inputDir        string
+	outputDir       string
+	fset            *token.FileSet
+	publicTypes     map[string]bool
 	referencedTypes map[string]bool
+	modulePath      string
+	typesImportPath string
+	inputBasePath   string
+	outputBasePath  string
 }
 
-func NewGenerator(inputDir, outputDir string) *Generator {
+func NewGenerator(inputDir, outputDir string) (*Generator, error) {
+	modulePath, err := getModulePath()
+	if err != nil {
+		return nil, err
+	}
+
 	return &Generator{
 		inputDir:        inputDir,
 		outputDir:       outputDir,
 		fset:            token.NewFileSet(),
 		publicTypes:     make(map[string]bool),
 		referencedTypes: make(map[string]bool),
+		modulePath:      modulePath,
+		typesImportPath: modulePath + "/pkg/apiserver/types",
+		inputBasePath:   modulePath + "/" + inputDir,
+		outputBasePath:  modulePath + "/" + outputDir,
+	}, nil
+}
+
+// getModulePath reads the module path from go.mod file.
+func getModulePath() (string, error) {
+	file, err := os.Open("go.mod")
+	if err != nil {
+		return "", fmt.Errorf("failed to open go.mod: %w (ensure you run orlop-gen from the repository root)", err)
 	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "module ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "module")), nil
+		}
+	}
+
+	return "", fmt.Errorf("no module declaration found in go.mod")
 }
 
 func (g *Generator) Generate() error {
