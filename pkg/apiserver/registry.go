@@ -33,21 +33,39 @@ type ResourceInfo struct {
 	PrivateNewFunc func() runtime.Object
 }
 
-// ResourceRegistry manages API resource registrations.
+// ResourceRegistry manages API resource registrations and their stores.
 type ResourceRegistry struct {
 	resources []ResourceInfo
+	stores    map[string]storage.ResourceStore
+	backend   *storage.MemoryBackend
+	scheme    *runtime.Scheme
 }
 
 // NewResourceRegistry creates a new resource registry.
-func NewResourceRegistry() *ResourceRegistry {
+func NewResourceRegistry(backend *storage.MemoryBackend, scheme *runtime.Scheme) *ResourceRegistry {
 	return &ResourceRegistry{
 		resources: []ResourceInfo{},
+		stores:    make(map[string]storage.ResourceStore),
+		backend:   backend,
+		scheme:    scheme,
 	}
 }
 
-// Register adds a resource to the registry.
+// Register adds a resource to the registry and creates its store.
 func (r *ResourceRegistry) Register(info ResourceInfo) {
 	r.resources = append(r.resources, info)
+	// Create store for this resource
+	r.stores[info.Plural] = r.backend.NewStore(info.Plural, r.scheme, info.GVK)
+}
+
+// GetStore returns the store for a given resource plural name.
+func (r *ResourceRegistry) GetStore(plural string) storage.ResourceStore {
+	return r.stores[plural]
+}
+
+// GetStores returns all stores indexed by resource plural name.
+func (r *ResourceRegistry) GetStores() map[string]storage.ResourceStore {
+	return r.stores
 }
 
 // Resources returns all registered resources.
@@ -73,7 +91,13 @@ func (r *ResourceRegistry) GetResources() []ResourceInfo {
 }
 
 // CreateHandler creates a ResourceHandler for the given resource info.
-func (r *ResourceRegistry) CreateHandler(store storage.ResourceStore, info ResourceInfo) (*handlers.ResourceHandler, error) {
+func (r *ResourceRegistry) CreateHandler(info ResourceInfo) (*handlers.ResourceHandler, error) {
+	// Get store for this resource
+	store := r.GetStore(info.Plural)
+	if store == nil {
+		return nil, fmt.Errorf("no store found for resource %s", info.Plural)
+	}
+
 	// Create schema processor
 	processor, err := r.createProcessor(info.SchemaYAML)
 	if err != nil {
@@ -94,7 +118,13 @@ func (r *ResourceRegistry) CreateHandler(store storage.ResourceStore, info Resou
 }
 
 // CreateConvertingHandler creates a ConvertingResourceHandler for the given resource info.
-func (r *ResourceRegistry) CreateConvertingHandler(store storage.ResourceStore, converter interface{}, info ResourceInfo) (interface{}, error) {
+func (r *ResourceRegistry) CreateConvertingHandler(converter interface{}, info ResourceInfo) (interface{}, error) {
+	// Get store for this resource
+	store := r.GetStore(info.Plural)
+	if store == nil {
+		return nil, fmt.Errorf("no store found for resource %s", info.Plural)
+	}
+
 	// Create schema processor
 	processor, err := r.createProcessor(info.SchemaYAML)
 	if err != nil {

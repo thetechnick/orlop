@@ -8,11 +8,10 @@ import (
 	"github.com/thetechnick/orlop/pkg/apiserver/conversion"
 	"github.com/thetechnick/orlop/pkg/apiserver/handlers"
 	"github.com/thetechnick/orlop/pkg/apiserver/middleware"
-	"github.com/thetechnick/orlop/pkg/apiserver/storage"
 )
 
 // setupRouter configures the HTTP router with all endpoints.
-func setupRouter(stores map[string]storage.ResourceStore, registry *ResourceRegistry, corsOrigins []string) (chi.Router, error) {
+func setupRouter(registry *ResourceRegistry, corsOrigins []string) (chi.Router, error) {
 	r := chi.NewRouter()
 
 	// Add CORS middleware
@@ -50,10 +49,7 @@ func setupRouter(stores map[string]storage.ResourceStore, registry *ResourceRegi
 			r.Route("/namespaces/{namespace}", func(r chi.Router) {
 				// Register routes for each resource
 				for _, res := range resources {
-					// Get per-type store
-					store := stores[res.Plural]
-
-					handler, err := registry.CreateHandler(store, res)
+					handler, err := registry.CreateHandler(res)
 					if err != nil {
 						// Log error but continue with other resources
 						continue
@@ -90,7 +86,7 @@ func setupRouter(stores map[string]storage.ResourceStore, registry *ResourceRegi
 }
 
 // setupConvertingRouter configures the HTTP router with converting handlers for public API.
-func setupConvertingRouter(stores map[string]storage.ResourceStore, registry *ResourceRegistry, converter *conversion.Converter, corsOrigins []string) (chi.Router, error) {
+func setupConvertingRouter(registry *ResourceRegistry, converter *conversion.Converter, corsOrigins []string) (chi.Router, error) {
 	r := chi.NewRouter()
 
 	// Add CORS middleware
@@ -128,10 +124,7 @@ func setupConvertingRouter(stores map[string]storage.ResourceStore, registry *Re
 			r.Route("/namespaces/{namespace}", func(r chi.Router) {
 				// Register routes for each resource
 				for _, res := range resources {
-					// Get per-type store
-					store := stores[res.Plural]
-
-					handlerInterface, err := registry.CreateConvertingHandler(store, converter, res)
+					handlerInterface, err := registry.CreateConvertingHandler(converter, res)
 					if err != nil {
 						// Log error but continue with other resources
 						continue

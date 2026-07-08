@@ -40,17 +40,12 @@ func New(opts Options) (*Server, error) {
 	privateScheme := runtime.NewScheme()
 	privatev1.AddToScheme(privateScheme)
 
-	// Create private API
-	privateRegistry := NewResourceRegistry()
+	// Create private API registry with backend and scheme
+	// Registry will create stores for each registered resource
+	privateRegistry := NewResourceRegistry(backend, privateScheme)
 	RegisterTestResources(privateRegistry)
 
-	// Create per-type stores for private API
-	privateStores := make(map[string]storage.ResourceStore)
-	for _, res := range privateRegistry.GetResources() {
-		privateStores[res.Plural] = backend.NewStore(res.Plural, privateScheme, res.GVK)
-	}
-
-	privateRouter, err := setupRouter(privateStores, privateRegistry, opts.CORSOrigins)
+	privateRouter, err := setupRouter(privateRegistry, opts.CORSOrigins)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup private router: %w", err)
 	}
@@ -68,22 +63,13 @@ func New(opts Options) (*Server, error) {
 
 	// Create public API if enabled
 	if opts.EnablePublicAPI {
-		publicRegistry := NewResourceRegistry()
+		// Public API uses same backend and scheme, but different registry
+		// This allows sharing stores between public and private APIs
+		publicRegistry := NewResourceRegistry(backend, privateScheme)
 		RegisterPublicResources(publicRegistry)
 
-		// Create per-type stores for public API (shared with private stores for same types)
-		publicStores := make(map[string]storage.ResourceStore)
-		for _, res := range publicRegistry.GetResources() {
-			// Reuse private store if it exists for the same resource type
-			if privateStore, ok := privateStores[res.Plural]; ok {
-				publicStores[res.Plural] = privateStore
-			} else {
-				publicStores[res.Plural] = backend.NewStore(res.Plural, privateScheme, res.GVK)
-			}
-		}
-
 		converter := conversion.NewConverter()
-		publicRouter, err := setupConvertingRouter(publicStores, publicRegistry, converter, opts.CORSOrigins)
+		publicRouter, err := setupConvertingRouter(publicRegistry, converter, opts.CORSOrigins)
 		if err != nil {
 			return nil, fmt.Errorf("failed to setup public router: %w", err)
 		}
