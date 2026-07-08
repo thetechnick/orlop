@@ -7,7 +7,6 @@ import (
 	apiext "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
-	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
 )
 
@@ -140,20 +139,12 @@ func init() {
 func GetResourceInfos() []types.ResourceInfo {
 	return []types.ResourceInfo{
 		{
-			GVK: runtimeschema.GroupVersionKind{
-				Group:   "test.orlop.thetechnick.ninja",
-				Version: "v1",
-				Kind:    "Object",
-			},
+			GVK:        GroupVersion.WithKind("Object"),
 			Plural:     ObjectPlural,
 			SchemaYAML: ObjectSchemaYAML,
 		},
 		{
-			GVK: runtimeschema.GroupVersionKind{
-				Group:   "test.orlop.thetechnick.ninja",
-				Version: "v1",
-				Kind:    "Other",
-			},
+			GVK:        GroupVersion.WithKind("Other"),
 			Plural:     OtherPlural,
 			SchemaYAML: OtherSchemaYAML,
 		},

@@ -9,7 +9,6 @@ import (
 
 	"github.com/munnerz/goautoneg"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 	openapihandler "k8s.io/kube-openapi/pkg/handler"
 	openapispec "k8s.io/kube-openapi/pkg/validation/spec"
@@ -18,10 +17,9 @@ import (
 
 // ResourceInfo describes a single API resource type (duplicated to avoid import cycle).
 type ResourceInfo struct {
-	GVK            runtimeschema.GroupVersionKind
-	Plural         string
-	SchemaYAML     string
-	PrivateNewFunc func() runtime.Object
+	GVK        runtimeschema.GroupVersionKind
+	Plural     string
+	SchemaYAML string
 }
 
 // ResourceProvider provides access to registered resources.

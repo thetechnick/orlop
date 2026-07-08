@@ -1,7 +1,6 @@
 package types
 
 import (
-	"k8s.io/apimachinery/pkg/runtime"
 	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 )
 
@@ -13,7 +12,4 @@ type ResourceInfo struct {
 	Plural string
 	// SchemaYAML is the OpenAPI v3 schema in YAML format
 	SchemaYAML string
-	// PrivateNewFunc creates a new instance of the private resource (for converting handlers)
-	// This is only used for public API resources that need conversion
-	PrivateNewFunc func() runtime.Object
 }

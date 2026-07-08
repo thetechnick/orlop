@@ -57,10 +57,9 @@ func (r *ResourceRegistry) Resources() []handlers.ResourceInfo {
 	result := make([]handlers.ResourceInfo, len(r.resources))
 	for i, res := range r.resources {
 		result[i] = handlers.ResourceInfo{
-			GVK:            res.GVK,
-			Plural:         res.Plural,
-			SchemaYAML:     res.SchemaYAML,
-			PrivateNewFunc: res.PrivateNewFunc,
+			GVK:        res.GVK,
+			Plural:     res.Plural,
+			SchemaYAML: res.SchemaYAML,
 		}
 	}
 	return result
