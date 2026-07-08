@@ -14,7 +14,10 @@ import (
 	"testing"
 	"time"
 
+	privatev1 "github.com/thetechnick/orlop/apis/private/test/v1"
 	"github.com/thetechnick/orlop/pkg/apiserver"
+	"k8s.io/apimachinery/pkg/runtime"
+	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 var (
@@ -23,13 +26,45 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	// Create scheme and register test types
+	scheme := runtime.NewScheme()
+	privatev1.AddToScheme(scheme)
+
+	// Define test resources
+	privateResources := []apiserver.ResourceInfo{
+		{
+			GVK: runtimeschema.GroupVersionKind{
+				Group:   "test.orlop.thetechnick.ninja",
+				Version: "v1",
+				Kind:    "Object",
+			},
+			Plural:        privatev1.ObjectPlural,
+			SchemaYAML:    privatev1.ObjectSchemaYAML,
+			NewObjectFunc: func() runtime.Object { return &privatev1.Object{} },
+			NewListFunc:   func() runtime.Object { return &privatev1.ObjectList{} },
+		},
+		{
+			GVK: runtimeschema.GroupVersionKind{
+				Group:   "test.orlop.thetechnick.ninja",
+				Version: "v1",
+				Kind:    "Other",
+			},
+			Plural:        privatev1.OtherPlural,
+			SchemaYAML:    privatev1.OtherSchemaYAML,
+			NewObjectFunc: func() runtime.Object { return &privatev1.Other{} },
+			NewListFunc:   func() runtime.Object { return &privatev1.OtherList{} },
+		},
+	}
+
 	// Start server on random port
 	opts := apiserver.Options{
-		Address:        "127.0.0.1",
-		PrivatePort:    8765, // Use fixed port for testing
-		PublicPort:     8766,
-		CORSOrigins:    []string{"*"},
-		EnablePublicAPI: false, // Disable public API for existing tests
+		Address:          "127.0.0.1",
+		PrivatePort:      8765, // Use fixed port for testing
+		PublicPort:       8766,
+		CORSOrigins:      []string{"*"},
+		EnablePublicAPI:  false, // Disable public API for existing tests
+		PrivateResources: privateResources,
+		Scheme:           scheme,
 	}
 
 	var err error

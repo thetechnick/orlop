@@ -3,8 +3,6 @@ package apiserver
 import (
 	"fmt"
 
-	privatev1 "github.com/thetechnick/orlop/apis/private/test/v1"
-	publicv1 "github.com/thetechnick/orlop/apis/public/test/v1"
 	"github.com/thetechnick/orlop/pkg/apiserver/conversion"
 	"github.com/thetechnick/orlop/pkg/apiserver/handlers"
 	pkgschema "github.com/thetechnick/orlop/pkg/apiserver/schema"
@@ -168,64 +166,4 @@ func (r *ResourceRegistry) createProcessor(schemaYAML string) (*pkgschema.Proces
 
 	// Create processor
 	return pkgschema.NewProcessor(structural, &props)
-}
-
-// RegisterTestResources registers the private test API resources.
-func RegisterTestResources(registry *ResourceRegistry) {
-	// Register Object resource
-	registry.Register(ResourceInfo{
-		GVK: runtimeschema.GroupVersionKind{
-			Group:   "test.orlop.thetechnick.ninja",
-			Version: "v1",
-			Kind:    "Object",
-		},
-		Plural:        privatev1.ObjectPlural,
-		SchemaYAML:    privatev1.ObjectSchemaYAML,
-		NewObjectFunc: func() runtime.Object { return &privatev1.Object{} },
-		NewListFunc:   func() runtime.Object { return &privatev1.ObjectList{} },
-	})
-
-	// Register Other resource
-	registry.Register(ResourceInfo{
-		GVK: runtimeschema.GroupVersionKind{
-			Group:   "test.orlop.thetechnick.ninja",
-			Version: "v1",
-			Kind:    "Other",
-		},
-		Plural:        privatev1.OtherPlural,
-		SchemaYAML:    privatev1.OtherSchemaYAML,
-		NewObjectFunc: func() runtime.Object { return &privatev1.Other{} },
-		NewListFunc:   func() runtime.Object { return &privatev1.OtherList{} },
-	})
-}
-
-// RegisterPublicResources registers the public test API resources.
-func RegisterPublicResources(registry *ResourceRegistry) {
-	// Register Object resource (public API with private storage)
-	registry.Register(ResourceInfo{
-		GVK: runtimeschema.GroupVersionKind{
-			Group:   "test.orlop.thetechnick.ninja",
-			Version: "v1",
-			Kind:    "Object",
-		},
-		Plural:         publicv1.ObjectPlural,
-		SchemaYAML:     publicv1.ObjectSchemaYAML,
-		NewObjectFunc:  func() runtime.Object { return &publicv1.Object{} },
-		NewListFunc:    func() runtime.Object { return &publicv1.ObjectList{} },
-		PrivateNewFunc: func() runtime.Object { return &privatev1.Object{} },
-	})
-
-	// Register Other resource (public API with private storage)
-	registry.Register(ResourceInfo{
-		GVK: runtimeschema.GroupVersionKind{
-			Group:   "test.orlop.thetechnick.ninja",
-			Version: "v1",
-			Kind:    "Other",
-		},
-		Plural:         publicv1.OtherPlural,
-		SchemaYAML:     publicv1.OtherSchemaYAML,
-		NewObjectFunc:  func() runtime.Object { return &publicv1.Other{} },
-		NewListFunc:    func() runtime.Object { return &publicv1.OtherList{} },
-		PrivateNewFunc: func() runtime.Object { return &privatev1.Other{} },
-	})
 }

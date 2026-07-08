@@ -38,13 +38,16 @@ func main() {
 		}
 	}
 
-	// Create server
+	// Create server with resource configuration
 	opts := apiserver.Options{
-		Address:        address,
-		PrivatePort:    privatePort,
-		PublicPort:     publicPort,
-		CORSOrigins:    origins,
-		EnablePublicAPI: enablePublic,
+		Address:          address,
+		PrivatePort:      privatePort,
+		PublicPort:       publicPort,
+		CORSOrigins:      origins,
+		EnablePublicAPI:  enablePublic,
+		PrivateResources: getPrivateResources(),
+		PublicResources:  getPublicResources(),
+		Scheme:           getScheme(),
 	}
 
 	server, err := apiserver.New(opts)
