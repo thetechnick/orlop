@@ -15,7 +15,6 @@ import (
 type Server struct {
 	privateRouter chi.Router
 	publicRouter  chi.Router
-	store         storage.ResourceStore
 	privateServer *http.Server
 	publicServer  *http.Server
 	options       Options
@@ -32,14 +31,17 @@ type Options struct {
 
 // New creates a new API server with the given options.
 func New(opts Options) (*Server, error) {
-	// Create shared storage backend
-	store := storage.NewMemoryStore()
-
 	// Create private API
 	privateRegistry := NewResourceRegistry()
 	RegisterTestResources(privateRegistry)
 
-	privateRouter, err := setupRouter(store, privateRegistry, opts.CORSOrigins)
+	// Create per-type stores for private API
+	privateStores := make(map[string]storage.ResourceStore)
+	for _, res := range privateRegistry.GetResources() {
+		privateStores[res.Plural] = storage.NewMemoryStore(res.Plural)
+	}
+
+	privateRouter, err := setupRouter(privateStores, privateRegistry, opts.CORSOrigins)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup private router: %w", err)
 	}
@@ -51,7 +53,6 @@ func New(opts Options) (*Server, error) {
 
 	server := &Server{
 		privateRouter: privateRouter,
-		store:         store,
 		privateServer: privateServer,
 		options:       opts,
 	}
@@ -61,8 +62,19 @@ func New(opts Options) (*Server, error) {
 		publicRegistry := NewResourceRegistry()
 		RegisterPublicResources(publicRegistry)
 
+		// Create per-type stores for public API (shared with private stores for same types)
+		publicStores := make(map[string]storage.ResourceStore)
+		for _, res := range publicRegistry.GetResources() {
+			// Reuse private store if it exists for the same resource type
+			if privateStore, ok := privateStores[res.Plural]; ok {
+				publicStores[res.Plural] = privateStore
+			} else {
+				publicStores[res.Plural] = storage.NewMemoryStore(res.Plural)
+			}
+		}
+
 		converter := conversion.NewConverter()
-		publicRouter, err := setupConvertingRouter(store, publicRegistry, converter, opts.CORSOrigins)
+		publicRouter, err := setupConvertingRouter(publicStores, publicRegistry, converter, opts.CORSOrigins)
 		if err != nil {
 			return nil, fmt.Errorf("failed to setup public router: %w", err)
 		}

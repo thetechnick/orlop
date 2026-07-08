@@ -12,7 +12,7 @@ import (
 )
 
 // setupRouter configures the HTTP router with all endpoints.
-func setupRouter(store storage.ResourceStore, registry *ResourceRegistry, corsOrigins []string) (chi.Router, error) {
+func setupRouter(stores map[string]storage.ResourceStore, registry *ResourceRegistry, corsOrigins []string) (chi.Router, error) {
 	r := chi.NewRouter()
 
 	// Add CORS middleware
@@ -49,6 +49,9 @@ func setupRouter(store storage.ResourceStore, registry *ResourceRegistry, corsOr
 			r.Route("/namespaces/{namespace}", func(r chi.Router) {
 				// Register routes for each resource
 				for _, res := range resources {
+					// Get per-type store
+					store := stores[res.Plural]
+
 					handler, err := registry.CreateHandler(store, res)
 					if err != nil {
 						// Log error but continue with other resources
@@ -85,7 +88,7 @@ func setupRouter(store storage.ResourceStore, registry *ResourceRegistry, corsOr
 }
 
 // setupConvertingRouter configures the HTTP router with converting handlers for public API.
-func setupConvertingRouter(store storage.ResourceStore, registry *ResourceRegistry, converter *conversion.Converter, corsOrigins []string) (chi.Router, error) {
+func setupConvertingRouter(stores map[string]storage.ResourceStore, registry *ResourceRegistry, converter *conversion.Converter, corsOrigins []string) (chi.Router, error) {
 	r := chi.NewRouter()
 
 	// Add CORS middleware
@@ -122,6 +125,9 @@ func setupConvertingRouter(store storage.ResourceStore, registry *ResourceRegist
 			r.Route("/namespaces/{namespace}", func(r chi.Router) {
 				// Register routes for each resource
 				for _, res := range resources {
+					// Get per-type store
+					store := stores[res.Plural]
+
 					handlerInterface, err := registry.CreateConvertingHandler(store, converter, res)
 					if err != nil {
 						// Log error but continue with other resources

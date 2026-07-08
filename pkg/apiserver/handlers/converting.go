@@ -113,7 +113,7 @@ func (h *ConvertingResourceHandler) Create(w http.ResponseWriter, r *http.Reques
 	privateObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Store private object
-	if err := h.store.Create(h.resourceType, namespace, name, privateObj); err != nil {
+	if err := h.store.Create(namespace, name, privateObj); err != nil {
 		if errors.IsAlreadyExists(err) {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
@@ -134,7 +134,7 @@ func (h *ConvertingResourceHandler) Get(w http.ResponseWriter, r *http.Request) 
 	name := chi.URLParam(r, "name")
 
 	// Get private object from storage
-	privateObj, err := h.store.Get(h.resourceType, namespace, name)
+	privateObj, err := h.store.Get(namespace, name)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -172,7 +172,7 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Get private objects from storage
-	privateObjects, err := h.store.List(h.resourceType, namespace, opts)
+	privateObjects, err := h.store.List(namespace, opts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list objects: %v", err))
 		return
@@ -209,7 +209,7 @@ func (h *ConvertingResourceHandler) Update(w http.ResponseWriter, r *http.Reques
 	name := chi.URLParam(r, "name")
 
 	// Get existing private object
-	existingPrivate, err := h.store.Get(h.resourceType, namespace, name)
+	existingPrivate, err := h.store.Get(namespace, name)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -270,7 +270,7 @@ func (h *ConvertingResourceHandler) Update(w http.ResponseWriter, r *http.Reques
 	privateObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Update object in storage
-	if err := h.store.Update(h.resourceType, namespace, name, privateObj); err != nil {
+	if err := h.store.Update(namespace, name, privateObj); err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {
@@ -294,7 +294,7 @@ func (h *ConvertingResourceHandler) Delete(w http.ResponseWriter, r *http.Reques
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
 
-	if err := h.store.Delete(h.resourceType, namespace, name); err != nil {
+	if err := h.store.Delete(namespace, name); err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
@@ -331,7 +331,7 @@ func (h *ConvertingResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.
 	}
 
 	// Get existing private object
-	existingPrivate, err := h.store.Get(h.resourceType, namespace, name)
+	existingPrivate, err := h.store.Get(namespace, name)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -377,7 +377,7 @@ func (h *ConvertingResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.
 	updatedPrivate.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Update in storage
-	if err := h.store.Update(h.resourceType, namespace, name, updatedPrivate); err != nil {
+	if err := h.store.Update(namespace, name, updatedPrivate); err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {

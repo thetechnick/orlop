@@ -95,7 +95,7 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	obj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Store object
-	if err := h.store.Create(h.resourceType, namespace, name, obj); err != nil {
+	if err := h.store.Create(namespace, name, obj); err != nil {
 		if errors.IsAlreadyExists(err) {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
@@ -115,7 +115,7 @@ func (h *ResourceHandler) Get(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
 
-	obj, err := h.store.Get(h.resourceType, namespace, name)
+	obj, err := h.store.Get(namespace, name)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -145,7 +145,7 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 		opts.LabelSelector = selector
 	}
 
-	objects, err := h.store.List(h.resourceType, namespace, opts)
+	objects, err := h.store.List(namespace, opts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list objects: %v", err))
 		return
@@ -188,7 +188,7 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
 	// Get existing object to compare spec
-	existing, err := h.store.Get(h.resourceType, namespace, name)
+	existing, err := h.store.Get(namespace, name)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -241,7 +241,7 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	obj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Update object
-	if err := h.store.Update(h.resourceType, namespace, name, obj); err != nil {
+	if err := h.store.Update(namespace, name, obj); err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {
@@ -263,7 +263,7 @@ func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
 
-	if err := h.store.Delete(h.resourceType, namespace, name); err != nil {
+	if err := h.store.Delete(namespace, name); err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {

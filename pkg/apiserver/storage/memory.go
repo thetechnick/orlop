@@ -12,34 +12,32 @@ import (
 )
 
 // MemoryStore implements ResourceStore using an in-memory map.
+// Each MemoryStore instance is for a specific resource type.
 type MemoryStore struct {
-	mu sync.RWMutex
-	// objects[resourceType][namespace/name] = object
-	objects           map[string]map[string]runtime.Object
+	mu                     sync.RWMutex
+	resourceType           string
+	objects                map[string]runtime.Object // namespace/name -> object
 	resourceVersionCounter int64
 }
 
-// NewMemoryStore creates a new in-memory storage backend.
-func NewMemoryStore() *MemoryStore {
+// NewMemoryStore creates a new in-memory storage backend for a specific resource type.
+func NewMemoryStore(resourceType string) *MemoryStore {
 	return &MemoryStore{
-		objects: make(map[string]map[string]runtime.Object),
+		resourceType:           resourceType,
+		objects:                make(map[string]runtime.Object),
 		resourceVersionCounter: 0,
 	}
 }
 
 // Create creates a new resource.
-func (s *MemoryStore) Create(resourceType, namespace, name string, obj runtime.Object) error {
+func (s *MemoryStore) Create(namespace, name string, obj runtime.Object) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	key := s.makeKey(namespace, name)
 
-	if s.objects[resourceType] == nil {
-		s.objects[resourceType] = make(map[string]runtime.Object)
-	}
-
-	if _, exists := s.objects[resourceType][key]; exists {
-		return errors.NewAlreadyExists(schema.GroupResource{Resource: resourceType}, name)
+	if _, exists := s.objects[key]; exists {
+		return errors.NewAlreadyExists(schema.GroupResource{Resource: s.resourceType}, name)
 	}
 
 	// Set resource version
@@ -48,41 +46,33 @@ func (s *MemoryStore) Create(resourceType, namespace, name string, obj runtime.O
 		return err
 	}
 
-	s.objects[resourceType][key] = obj.DeepCopyObject()
+	s.objects[key] = obj.DeepCopyObject()
 	return nil
 }
 
 // Get retrieves a resource.
-func (s *MemoryStore) Get(resourceType, namespace, name string) (runtime.Object, error) {
+func (s *MemoryStore) Get(namespace, name string) (runtime.Object, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	key := s.makeKey(namespace, name)
 
-	if s.objects[resourceType] == nil {
-		return nil, errors.NewNotFound(schema.GroupResource{Resource: resourceType}, name)
-	}
-
-	obj, exists := s.objects[resourceType][key]
+	obj, exists := s.objects[key]
 	if !exists {
-		return nil, errors.NewNotFound(schema.GroupResource{Resource: resourceType}, name)
+		return nil, errors.NewNotFound(schema.GroupResource{Resource: s.resourceType}, name)
 	}
 
 	return obj.DeepCopyObject(), nil
 }
 
 // List lists all resources in a namespace.
-func (s *MemoryStore) List(resourceType, namespace string, opts ListOptions) ([]runtime.Object, error) {
+func (s *MemoryStore) List(namespace string, opts ListOptions) ([]runtime.Object, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var result []runtime.Object
 
-	if s.objects[resourceType] == nil {
-		return result, nil
-	}
-
-	for key, obj := range s.objects[resourceType] {
+	for key, obj := range s.objects {
 		// Filter by namespace
 		if namespace != "" && !s.matchesNamespace(key, namespace) {
 			continue
@@ -106,19 +96,15 @@ func (s *MemoryStore) List(resourceType, namespace string, opts ListOptions) ([]
 }
 
 // Update updates an existing resource.
-func (s *MemoryStore) Update(resourceType, namespace, name string, obj runtime.Object) error {
+func (s *MemoryStore) Update(namespace, name string, obj runtime.Object) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	key := s.makeKey(namespace, name)
 
-	if s.objects[resourceType] == nil {
-		return errors.NewNotFound(schema.GroupResource{Resource: resourceType}, name)
-	}
-
-	existing, exists := s.objects[resourceType][key]
+	existing, exists := s.objects[key]
 	if !exists {
-		return errors.NewNotFound(schema.GroupResource{Resource: resourceType}, name)
+		return errors.NewNotFound(schema.GroupResource{Resource: s.resourceType}, name)
 	}
 
 	// Check resource version for optimistic concurrency control
@@ -134,7 +120,7 @@ func (s *MemoryStore) Update(resourceType, namespace, name string, obj runtime.O
 
 	if newRV != existingRV {
 		return errors.NewConflict(
-			schema.GroupResource{Resource: resourceType},
+			schema.GroupResource{Resource: s.resourceType},
 			name,
 			fmt.Errorf("resource version mismatch: expected %s, got %s", existingRV, newRV),
 		)
@@ -146,26 +132,22 @@ func (s *MemoryStore) Update(resourceType, namespace, name string, obj runtime.O
 		return err
 	}
 
-	s.objects[resourceType][key] = obj.DeepCopyObject()
+	s.objects[key] = obj.DeepCopyObject()
 	return nil
 }
 
 // Delete deletes a resource.
-func (s *MemoryStore) Delete(resourceType, namespace, name string) error {
+func (s *MemoryStore) Delete(namespace, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	key := s.makeKey(namespace, name)
 
-	if s.objects[resourceType] == nil {
-		return errors.NewNotFound(schema.GroupResource{Resource: resourceType}, name)
+	if _, exists := s.objects[key]; !exists {
+		return errors.NewNotFound(schema.GroupResource{Resource: s.resourceType}, name)
 	}
 
-	if _, exists := s.objects[resourceType][key]; !exists {
-		return errors.NewNotFound(schema.GroupResource{Resource: resourceType}, name)
-	}
-
-	delete(s.objects[resourceType], key)
+	delete(s.objects, key)
 	return nil
 }
 
