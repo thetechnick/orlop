@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -243,6 +244,15 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 			continue
 		}
 
+		// Add x-kubernetes-group-version-kind extension for kubectl validation
+		schemaObj["x-kubernetes-group-version-kind"] = []map[string]interface{}{
+			{
+				"group":   res.GVK.Group,
+				"version": res.GVK.Version,
+				"kind":    res.GVK.Kind,
+			},
+		}
+
 		// Add schema to components
 		schemaName := gv.String() + "." + res.GVK.Kind
 		schemas[schemaName] = schemaObj
@@ -251,6 +261,9 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 		basePath := "/apis/" + group + "/" + version + "/namespaces/{namespace}/" + res.Plural
 		paths := spec["paths"].(map[string]interface{})
 
+		// Schema reference for responses
+		schemaRef := "#/components/schemas/" + schemaName
+
 		// Collection operations
 		paths[basePath] = map[string]interface{}{
 			"get": map[string]interface{}{
@@ -258,6 +271,13 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 				"responses": map[string]interface{}{
 					"200": map[string]interface{}{
 						"description": "OK",
+						"content": map[string]interface{}{
+							"application/json": map[string]interface{}{
+								"schema": map[string]interface{}{
+									"$ref": schemaRef,
+								},
+							},
+						},
 					},
 				},
 			},
@@ -266,6 +286,13 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 				"responses": map[string]interface{}{
 					"201": map[string]interface{}{
 						"description": "Created",
+						"content": map[string]interface{}{
+							"application/json": map[string]interface{}{
+								"schema": map[string]interface{}{
+									"$ref": schemaRef,
+								},
+							},
+						},
 					},
 				},
 			},
@@ -279,6 +306,13 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 				"responses": map[string]interface{}{
 					"200": map[string]interface{}{
 						"description": "OK",
+						"content": map[string]interface{}{
+							"application/json": map[string]interface{}{
+								"schema": map[string]interface{}{
+									"$ref": schemaRef,
+								},
+							},
+						},
 					},
 				},
 			},
@@ -287,6 +321,13 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 				"responses": map[string]interface{}{
 					"200": map[string]interface{}{
 						"description": "OK",
+						"content": map[string]interface{}{
+							"application/json": map[string]interface{}{
+								"schema": map[string]interface{}{
+									"$ref": schemaRef,
+								},
+							},
+						},
 					},
 				},
 			},
@@ -308,6 +349,13 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 				"responses": map[string]interface{}{
 					"200": map[string]interface{}{
 						"description": "OK",
+						"content": map[string]interface{}{
+							"application/json": map[string]interface{}{
+								"schema": map[string]interface{}{
+									"$ref": schemaRef,
+								},
+							},
+						},
 					},
 				},
 			},
@@ -316,6 +364,13 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 				"responses": map[string]interface{}{
 					"200": map[string]interface{}{
 						"description": "OK",
+						"content": map[string]interface{}{
+							"application/json": map[string]interface{}{
+								"schema": map[string]interface{}{
+									"$ref": schemaRef,
+								},
+							},
+						},
 					},
 				},
 			},
@@ -339,6 +394,16 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 // OpenAPIV2 handles GET /openapi/v2
 // Returns the OpenAPI v2 (Swagger 2.0) specification for all APIs.
 func (h *DiscoveryHandler) OpenAPIV2(w http.ResponseWriter, r *http.Request) {
+	// Check Accept header - we only support JSON, not protobuf
+	accept := r.Header.Get("Accept")
+	if strings.Contains(accept, "protobuf") || strings.Contains(accept, "proto-openapi") {
+		// Return 406 to tell kubectl we don't support protobuf
+		// This forces kubectl to fall back to requesting JSON
+		w.WriteHeader(http.StatusNotAcceptable)
+		w.Write([]byte("protobuf encoding not supported, use application/json"))
+		return
+	}
+
 	// Build OpenAPI v2 (Swagger 2.0) document
 	spec := map[string]interface{}{
 		"swagger": "2.0",
