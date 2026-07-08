@@ -122,10 +122,8 @@ func (g *Generator) Generate() error {
 		return fmt.Errorf("generating schemas for internal: %w", err)
 	}
 
-	fmt.Println("Generating schemas for public APIs...")
-	if err := g.generateSchemas(g.outputDir); err != nil {
-		return fmt.Errorf("generating schemas for public: %w", err)
-	}
+	// Note: Public API schemas are manually maintained in zz_generated.schemas.go
+	// They reference private API schemas since public APIs don't generate CRDs
 
 	fmt.Println("Generating conversion functions...")
 	if err := g.generateConversions(); err != nil {
@@ -411,10 +409,16 @@ func (g *Generator) filterFile(file *ast.File) *ast.File {
 
 			filteredSpec := g.filterTypeSpec(typeSpec)
 			if filteredSpec != nil {
+				// Create a new GenDecl for each type
+				// Preserve TokPos to maintain proper formatting
 				newGenDecl := &ast.GenDecl{
-					Tok: genDecl.Tok,
+					Doc:    filteredSpec.Doc,
+					TokPos: genDecl.TokPos,
+					Tok:    genDecl.Tok,
+					Specs:  []ast.Spec{filteredSpec},
 				}
-				newGenDecl.Specs = []ast.Spec{filteredSpec}
+				// Move doc from TypeSpec to GenDecl for correct formatting
+				filteredSpec.Doc = nil
 				typeDecls = append(typeDecls, newGenDecl)
 			}
 		}

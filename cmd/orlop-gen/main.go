@@ -14,7 +14,7 @@ func main() {
 		outputDir string
 	)
 
-	flag.StringVar(&inputDir, "input-dir", "apis/internal", "input directory containing internal APIs")
+	flag.StringVar(&inputDir, "input-dir", "apis/private", "input directory containing private APIs")
 	flag.StringVar(&outputDir, "output-dir", "apis/public", "output directory for public APIs")
 	flag.Parse()
 
