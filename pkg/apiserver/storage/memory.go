@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // MemoryBackend provides shared state for all MemoryStore instances.
@@ -28,16 +29,18 @@ func NewMemoryBackend() *MemoryBackend {
 
 // NewStore creates a new MemoryStore for a specific resource type that shares
 // the resource version counter with other stores from this backend.
-func (b *MemoryBackend) NewStore(resourceType string) *MemoryStore {
+func (b *MemoryBackend) NewStore(resourceType string, scheme *runtime.Scheme, gvk schema.GroupVersionKind) *MemoryStore {
 	return &MemoryStore{
 		backend:      b,
 		resourceType: resourceType,
-		objects:      make(map[string]runtime.Object),
+		objects:      make(map[string]client.Object),
+		scheme:       scheme,
+		gvk:          gvk,
 	}
 }
 
-// CurrentResourceVersion returns the current resource version.
-func (b *MemoryBackend) CurrentResourceVersion() string {
+// currentResourceVersion returns the current resource version.
+func (b *MemoryBackend) currentResourceVersion() string {
 	return fmt.Sprintf("%d", b.resourceVersionCounter.Load())
 }
 
@@ -71,13 +74,18 @@ type MemoryStore struct {
 	mu           sync.RWMutex
 	backend      *MemoryBackend
 	resourceType string
-	objects      map[string]runtime.Object // namespace/name -> object
+	objects      map[string]client.Object // namespace/name -> object
+	scheme       *runtime.Scheme          // For creating list objects
+	gvk          schema.GroupVersionKind  // For list metadata
 }
 
 // Create creates a new resource.
-func (s *MemoryStore) Create(namespace, name string, obj runtime.Object) error {
+func (s *MemoryStore) Create(obj client.Object) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	namespace := obj.GetNamespace()
+	name := obj.GetName()
 
 	key := s.makeKey(namespace, name)
 
@@ -91,13 +99,13 @@ func (s *MemoryStore) Create(namespace, name string, obj runtime.Object) error {
 		return err
 	}
 
-	s.objects[key] = obj.DeepCopyObject()
+	s.objects[key] = obj.DeepCopyObject().(client.Object)
 
 	// Broadcast watch event
 	watcher := s.backend.GetWatcher(s.resourceType)
 	watcher.Broadcast(WatchEvent{
 		Type:            "ADDED",
-		Object:          obj.DeepCopyObject(),
+		Object:          obj.DeepCopyObject().(client.Object),
 		ResourceVersion: fmt.Sprintf("%d", newVersion),
 	})
 
@@ -105,7 +113,7 @@ func (s *MemoryStore) Create(namespace, name string, obj runtime.Object) error {
 }
 
 // Get retrieves a resource.
-func (s *MemoryStore) Get(namespace, name string) (runtime.Object, error) {
+func (s *MemoryStore) Get(namespace, name string) (client.Object, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -116,44 +124,63 @@ func (s *MemoryStore) Get(namespace, name string) (runtime.Object, error) {
 		return nil, errors.NewNotFound(schema.GroupResource{Resource: s.resourceType}, name)
 	}
 
-	return obj.DeepCopyObject(), nil
+	return obj.DeepCopyObject().(client.Object), nil
 }
 
-// List lists all resources in a namespace.
-func (s *MemoryStore) List(namespace string, opts ListOptions) ([]runtime.Object, error) {
+// List lists all resources matching the given options and returns a properly typed list object.
+func (s *MemoryStore) List(opts client.ListOptions) (client.ObjectList, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var result []runtime.Object
+	// Create list object using scheme
+	listGVK := s.gvk.GroupVersion().WithKind(s.gvk.Kind + "List")
+	listObj, err := s.scheme.New(listGVK)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create list object: %w", err)
+	}
 
+	list, ok := listObj.(client.ObjectList)
+	if !ok {
+		return nil, fmt.Errorf("created object is not a client.ObjectList")
+	}
+
+	// Collect matching items
+	var items []runtime.Object
 	for key, obj := range s.objects {
 		// Filter by namespace
-		if namespace != "" && !s.matchesNamespace(key, namespace) {
+		if opts.Namespace != "" && !s.matchesNamespace(key, opts.Namespace) {
 			continue
 		}
 
 		// Filter by label selector
-		if opts.LabelSelector != nil && !opts.LabelSelector.Empty() {
-			accessor, err := meta.Accessor(obj)
-			if err != nil {
-				continue
-			}
-			if !opts.LabelSelector.Matches(labels.Set(accessor.GetLabels())) {
+		// client.ListOptions uses LabelSelector which is a labels.Selector interface
+		if opts.LabelSelector != nil {
+			if !opts.LabelSelector.Matches(labels.Set(obj.GetLabels())) {
 				continue
 			}
 		}
 
-		result = append(result, obj.DeepCopyObject())
+		items = append(items, obj.DeepCopyObject())
 	}
 
-	return result, nil
+	// Set items on the list using meta.SetList
+	if err := meta.SetList(list, items); err != nil {
+		return nil, fmt.Errorf("failed to set list items: %w", err)
+	}
+
+	// Set list metadata
+	list.SetResourceVersion(s.backend.currentResourceVersion())
+
+	return list, nil
 }
 
 // Update updates an existing resource.
-func (s *MemoryStore) Update(namespace, name string, obj runtime.Object) error {
+func (s *MemoryStore) Update(obj client.Object) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	namespace := obj.GetNamespace()
+	name := obj.GetName()
 	key := s.makeKey(namespace, name)
 
 	existing, exists := s.objects[key]
@@ -186,13 +213,13 @@ func (s *MemoryStore) Update(namespace, name string, obj runtime.Object) error {
 		return err
 	}
 
-	s.objects[key] = obj.DeepCopyObject()
+	s.objects[key] = obj.DeepCopyObject().(client.Object)
 
 	// Broadcast watch event
 	watcher := s.backend.GetWatcher(s.resourceType)
 	watcher.Broadcast(WatchEvent{
 		Type:            "MODIFIED",
-		Object:          obj.DeepCopyObject(),
+		Object:          obj.DeepCopyObject().(client.Object),
 		ResourceVersion: fmt.Sprintf("%d", newVersion),
 	})
 
@@ -217,8 +244,8 @@ func (s *MemoryStore) Delete(namespace, name string) error {
 	watcher := s.backend.GetWatcher(s.resourceType)
 	watcher.Broadcast(WatchEvent{
 		Type:            "DELETED",
-		Object:          obj.DeepCopyObject(),
-		ResourceVersion: s.backend.CurrentResourceVersion(),
+		Object:          obj.DeepCopyObject().(client.Object),
+		ResourceVersion: s.backend.currentResourceVersion(),
 	})
 
 	return nil
@@ -257,13 +284,13 @@ func (s *MemoryStore) setResourceVersion(obj runtime.Object, version int64) erro
 	return nil
 }
 
-// CurrentResourceVersion returns the current resource version of the backend.
-func (s *MemoryStore) CurrentResourceVersion() string {
-	return s.backend.CurrentResourceVersion()
+// currentResourceVersion returns the current resource version of the backend.
+func (s *MemoryStore) currentResourceVersion() string {
+	return s.backend.currentResourceVersion()
 }
 
 // Watch starts watching for changes starting from the given resource version.
-func (s *MemoryStore) Watch(namespace string, opts ListOptions, resourceVersion string) (<-chan WatchEvent, func(), error) {
+func (s *MemoryStore) Watch(opts client.ListOptions, resourceVersion string) (<-chan WatchEvent, func(), error) {
 	watcher := s.backend.GetWatcher(s.resourceType)
 
 	// Subscribe to watch events
@@ -291,18 +318,18 @@ func (s *MemoryStore) Watch(namespace string, opts ListOptions, resourceVersion 
 				}
 
 				// Filter by namespace
-				if namespace != "" {
+				if opts.Namespace != "" {
 					accessor, err := meta.Accessor(event.Object)
 					if err != nil {
 						continue
 					}
-					if accessor.GetNamespace() != namespace {
+					if accessor.GetNamespace() != opts.Namespace {
 						continue
 					}
 				}
 
 				// Filter by label selector
-				if opts.LabelSelector != nil && !opts.LabelSelector.Empty() {
+				if opts.LabelSelector != nil {
 					accessor, err := meta.Accessor(event.Object)
 					if err != nil {
 						continue

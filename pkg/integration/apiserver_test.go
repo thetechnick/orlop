@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"reflect"
 	"sort"
 	"testing"
@@ -58,9 +59,7 @@ func TestMain(m *testing.M) {
 	server.Shutdown(ctx)
 
 	// Exit with test result code
-	if code != 0 {
-		panic("Tests failed")
-	}
+	os.Exit(code)
 }
 
 func TestObjectCRUD(t *testing.T) {

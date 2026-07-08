@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // ResourceHandler handles CRUD operations for a specific resource type.
@@ -26,8 +27,8 @@ type ResourceHandler struct {
 	processor     *schema.Processor
 	gvk           runtimeschema.GroupVersionKind
 	resourceType  string
-	newObjectFunc func() runtime.Object
-	newListFunc   func() runtime.Object
+	newObjectFunc func() client.Object
+	newListFunc   func() client.ObjectList
 }
 
 // NewResourceHandler creates a new resource handler.
@@ -44,8 +45,8 @@ func NewResourceHandler(
 		processor:     processor,
 		gvk:           gvk,
 		resourceType:  resourceType,
-		newObjectFunc: newObjectFunc,
-		newListFunc:   newListFunc,
+		newObjectFunc: func() client.Object { return newObjectFunc().(client.Object) },
+		newListFunc:   func() client.ObjectList { return newListFunc().(client.ObjectList) },
 	}
 }
 
@@ -96,7 +97,7 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	obj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Store object
-	if err := h.store.Create(namespace, name, obj); err != nil {
+	if err := h.store.Create(obj); err != nil {
 		if errors.IsAlreadyExists(err) {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
@@ -135,10 +136,14 @@ func (h *ResourceHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 
+	// Build list options from query parameters
+	opts := client.ListOptions{
+		Namespace: namespace,
+	}
+
 	// Parse label selector from query parameter
-	opts := storage.ListOptions{}
-	if labelSelector := r.URL.Query().Get("labelSelector"); labelSelector != "" {
-		selector, err := labels.Parse(labelSelector)
+	if labelSelectorStr := r.URL.Query().Get("labelSelector"); labelSelectorStr != "" {
+		selector, err := labels.Parse(labelSelectorStr)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid label selector: %v", err))
 			return
@@ -148,39 +153,31 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	// Check if this is a watch request
 	if r.URL.Query().Get("watch") == "true" {
-		h.handleWatch(w, r, namespace, opts)
+		h.handleWatch(w, r, opts)
 		return
 	}
 
-	objects, err := h.store.List(namespace, opts)
+	list, err := h.store.List(opts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list objects: %v", err))
 		return
 	}
 
-	// Use reflection to set items - this is a simplified approach
-	// In production, you'd want type-specific list construction
-	listMap := map[string]interface{}{
-		"apiVersion": h.gvk.Group + "/" + h.gvk.Version,
-		"kind":       h.gvk.Kind + "List",
-		"metadata": map[string]interface{}{
-			"resourceVersion": h.store.CurrentResourceVersion(),
-		},
-		"items": objects,
-	}
+	// Set GVK on the list
+	list.GetObjectKind().SetGroupVersionKind(h.gvk.GroupVersion().WithKind(h.gvk.Kind + "List"))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(listMap)
+	json.NewEncoder(w).Encode(list)
 }
 
 // handleWatch handles watch requests using Server-Sent Events.
-func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, namespace string, opts storage.ListOptions) {
+func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, opts client.ListOptions) {
 	// Get resourceVersion to start from
 	resourceVersion := r.URL.Query().Get("resourceVersion")
 
 	// Start watch
-	eventCh, stop, err := h.store.Watch(namespace, opts, resourceVersion)
+	eventCh, stop, err := h.store.Watch(opts, resourceVersion)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to start watch: %v", err))
 		return
@@ -282,7 +279,7 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	obj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Update object
-	if err := h.store.Update(namespace, name, obj); err != nil {
+	if err := h.store.Update(obj); err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {
@@ -405,7 +402,7 @@ func (h *ResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
 	obj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Update object in storage
-	if err := h.store.Update(namespace, name, obj); err != nil {
+	if err := h.store.Update(obj); err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {

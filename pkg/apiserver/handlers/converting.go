@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // ConvertingResourceHandler wraps a ResourceHandler and performs conversions
@@ -29,9 +30,9 @@ type ConvertingResourceHandler struct {
 	converter      *conversion.Converter
 	gvk            runtimeschema.GroupVersionKind
 	resourceType   string
-	newObjectFunc  func() runtime.Object // Public type constructor
-	newListFunc    func() runtime.Object // Public list constructor
-	privateNewFunc func() runtime.Object // Private type constructor
+	newObjectFunc  func() runtime.Object    // Public type constructor
+	newListFunc    func() client.ObjectList // Public list constructor
+	privateNewFunc func() client.Object     // Private type constructor
 }
 
 // NewConvertingResourceHandler creates a new converting resource handler.
@@ -52,8 +53,8 @@ func NewConvertingResourceHandler(
 		gvk:            gvk,
 		resourceType:   resourceType,
 		newObjectFunc:  publicNewObjectFunc,
-		newListFunc:    publicNewListFunc,
-		privateNewFunc: privateNewFunc,
+		newListFunc:    func() client.ObjectList { return publicNewListFunc().(client.ObjectList) },
+		privateNewFunc: func() client.Object { return privateNewFunc().(client.Object) },
 	}
 }
 
@@ -113,8 +114,8 @@ func (h *ConvertingResourceHandler) Create(w http.ResponseWriter, r *http.Reques
 	// Set GVK on private object for storage
 	privateObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
-	// Store private object
-	if err := h.store.Create(namespace, name, privateObj); err != nil {
+	// Store private object (cast to client.Object)
+	if err := h.store.Create(privateObj.(client.Object)); err != nil {
 		if errors.IsAlreadyExists(err) {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
@@ -168,10 +169,14 @@ func (h *ConvertingResourceHandler) Get(w http.ResponseWriter, r *http.Request) 
 func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 
+	// Build list options from query parameters
+	opts := client.ListOptions{
+		Namespace: namespace,
+	}
+
 	// Parse label selector from query parameter
-	opts := storage.ListOptions{}
-	if labelSelector := r.URL.Query().Get("labelSelector"); labelSelector != "" {
-		selector, err := labels.Parse(labelSelector)
+	if labelSelectorStr := r.URL.Query().Get("labelSelector"); labelSelectorStr != "" {
+		selector, err := labels.Parse(labelSelectorStr)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid label selector: %v", err))
 			return
@@ -181,20 +186,27 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 
 	// Check if this is a watch request
 	if r.URL.Query().Get("watch") == "true" {
-		h.handleWatch(w, r, namespace, opts)
+		h.handleWatch(w, r, opts)
 		return
 	}
 
-	// Get private objects from storage
-	privateObjects, err := h.store.List(namespace, opts)
+	// Get private objects list from storage
+	privateList, err := h.store.List(opts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list objects: %v", err))
 		return
 	}
 
+	// Extract items from the list using meta.ExtractList
+	privateItems, err := meta.ExtractList(privateList)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to extract list items: %v", err))
+		return
+	}
+
 	// Convert each private object to public
-	publicObjects := make([]runtime.Object, 0, len(privateObjects))
-	for _, privateObj := range privateObjects {
+	publicObjects := make([]runtime.Object, 0, len(privateItems))
+	for _, privateObj := range privateItems {
 		publicObj, err := h.converter.PrivateToPublic(privateObj)
 		if err != nil {
 			continue // Skip objects that fail conversion
@@ -203,27 +215,28 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Create list object
-	listMap := map[string]interface{}{
-		"apiVersion": h.gvk.Group + "/" + h.gvk.Version,
-		"kind":       h.gvk.Kind + "List",
-		"metadata": map[string]interface{}{
-			"resourceVersion": h.store.CurrentResourceVersion(),
-		},
-		"items": publicObjects,
+	publicList := h.newListFunc()
+	if err := meta.SetList(publicList, publicObjects); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to set list items: %v", err))
+		return
 	}
+
+	// Set metadata and GVK
+	publicList.GetObjectKind().SetGroupVersionKind(h.gvk.GroupVersion().WithKind(h.gvk.Kind + "List"))
+	publicList.SetResourceVersion(privateList.GetResourceVersion())
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(listMap)
+	json.NewEncoder(w).Encode(publicList)
 }
 
 // handleWatch handles watch requests using streaming JSON.
-func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, namespace string, opts storage.ListOptions) {
+func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, opts client.ListOptions) {
 	// Get resourceVersion to start from
 	resourceVersion := r.URL.Query().Get("resourceVersion")
 
 	// Start watch
-	eventCh, stop, err := h.store.Watch(namespace, opts, resourceVersion)
+	eventCh, stop, err := h.store.Watch(opts, resourceVersion)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to start watch: %v", err))
 		return
@@ -338,8 +351,8 @@ func (h *ConvertingResourceHandler) Update(w http.ResponseWriter, r *http.Reques
 	// Set GVK
 	privateObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
-	// Update object in storage
-	if err := h.store.Update(namespace, name, privateObj); err != nil {
+	// Update object in storage (cast to client.Object)
+	if err := h.store.Update(privateObj.(client.Object)); err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {
@@ -452,8 +465,8 @@ func (h *ConvertingResourceHandler) Patch(w http.ResponseWriter, r *http.Request
 	// Set GVK
 	privateObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
-	// Update object in storage
-	if err := h.store.Update(namespace, name, privateObj); err != nil {
+	// Update object in storage (cast to client.Object)
+	if err := h.store.Update(privateObj.(client.Object)); err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {
@@ -560,7 +573,7 @@ func (h *ConvertingResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.
 	updatedPrivate.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Update in storage
-	if err := h.store.Update(namespace, name, updatedPrivate); err != nil {
+	if err := h.store.Update(updatedPrivate); err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {

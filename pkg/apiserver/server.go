@@ -7,8 +7,10 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	privatev1 "github.com/thetechnick/orlop/apis/private/test/v1"
 	"github.com/thetechnick/orlop/pkg/apiserver/conversion"
 	"github.com/thetechnick/orlop/pkg/apiserver/storage"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // Server represents the API server with both private and public endpoints.
@@ -34,6 +36,10 @@ func New(opts Options) (*Server, error) {
 	// Create shared memory backend for consistent resource versioning
 	backend := storage.NewMemoryBackend()
 
+	// Create scheme and register types
+	privateScheme := runtime.NewScheme()
+	privatev1.AddToScheme(privateScheme)
+
 	// Create private API
 	privateRegistry := NewResourceRegistry()
 	RegisterTestResources(privateRegistry)
@@ -41,7 +47,7 @@ func New(opts Options) (*Server, error) {
 	// Create per-type stores for private API
 	privateStores := make(map[string]storage.ResourceStore)
 	for _, res := range privateRegistry.GetResources() {
-		privateStores[res.Plural] = backend.NewStore(res.Plural)
+		privateStores[res.Plural] = backend.NewStore(res.Plural, privateScheme, res.GVK)
 	}
 
 	privateRouter, err := setupRouter(privateStores, privateRegistry, opts.CORSOrigins)
@@ -72,7 +78,7 @@ func New(opts Options) (*Server, error) {
 			if privateStore, ok := privateStores[res.Plural]; ok {
 				publicStores[res.Plural] = privateStore
 			} else {
-				publicStores[res.Plural] = backend.NewStore(res.Plural)
+				publicStores[res.Plural] = backend.NewStore(res.Plural, privateScheme, res.GVK)
 			}
 		}
 

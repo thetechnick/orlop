@@ -69,7 +69,7 @@ func (h *ResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	obj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Update in storage
-	if err := h.store.Update(namespace, name, obj); err != nil {
+	if err := h.store.Update(obj); err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {
