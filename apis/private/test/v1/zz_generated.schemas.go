@@ -3,9 +3,12 @@
 package v1
 
 import (
+	"github.com/thetechnick/orlop/pkg/apiserver/types"
 	apiext "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
+	"k8s.io/apimachinery/pkg/runtime"
+	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
 )
 
@@ -141,5 +144,34 @@ func init() {
 	OtherSchema, err = schema.NewStructural(&otherProps)
 	if err != nil {
 		panic("failed to create structural schema for Other: " + err.Error())
+	}
+}
+
+// GetResourceInfos returns ResourceInfo definitions for all types in this package.
+// This can be used to configure an API server with these resources.
+func GetResourceInfos() []types.ResourceInfo {
+	return []types.ResourceInfo{
+		{
+			GVK: runtimeschema.GroupVersionKind{
+				Group:   "test.orlop.thetechnick.ninja",
+				Version: "v1",
+				Kind:    "Object",
+			},
+			Plural:        ObjectPlural,
+			SchemaYAML:    ObjectSchemaYAML,
+			NewObjectFunc: func() runtime.Object { return &Object{} },
+			NewListFunc:   func() runtime.Object { return &ObjectList{} },
+		},
+		{
+			GVK: runtimeschema.GroupVersionKind{
+				Group:   "test.orlop.thetechnick.ninja",
+				Version: "v1",
+				Kind:    "Other",
+			},
+			Plural:        OtherPlural,
+			SchemaYAML:    OtherSchemaYAML,
+			NewObjectFunc: func() runtime.Object { return &Other{} },
+			NewListFunc:   func() runtime.Object { return &OtherList{} },
+		},
 	}
 }

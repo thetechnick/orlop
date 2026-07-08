@@ -5,65 +5,53 @@ import (
 	publicv1 "github.com/thetechnick/orlop/apis/public/test/v1"
 	"github.com/thetechnick/orlop/pkg/apiserver"
 	"k8s.io/apimachinery/pkg/runtime"
-	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // getPrivateResources returns the resource definitions for the private API.
+// Uses generated ResourceInfo from the private API package.
 func getPrivateResources() []apiserver.ResourceInfo {
-	return []apiserver.ResourceInfo{
-		{
-			GVK: runtimeschema.GroupVersionKind{
-				Group:   "test.orlop.thetechnick.ninja",
-				Version: "v1",
-				Kind:    "Object",
-			},
-			Plural:        privatev1.ObjectPlural,
-			SchemaYAML:    privatev1.ObjectSchemaYAML,
-			NewObjectFunc: func() runtime.Object { return &privatev1.Object{} },
-			NewListFunc:   func() runtime.Object { return &privatev1.ObjectList{} },
-		},
-		{
-			GVK: runtimeschema.GroupVersionKind{
-				Group:   "test.orlop.thetechnick.ninja",
-				Version: "v1",
-				Kind:    "Other",
-			},
-			Plural:        privatev1.OtherPlural,
-			SchemaYAML:    privatev1.OtherSchemaYAML,
-			NewObjectFunc: func() runtime.Object { return &privatev1.Other{} },
-			NewListFunc:   func() runtime.Object { return &privatev1.OtherList{} },
-		},
+	// Convert from privatev1.ResourceInfo to apiserver.ResourceInfo
+	privateInfos := privatev1.GetResourceInfos()
+	result := make([]apiserver.ResourceInfo, len(privateInfos))
+	for i, info := range privateInfos {
+		result[i] = apiserver.ResourceInfo{
+			GVK:            info.GVK,
+			Plural:         info.Plural,
+			SchemaYAML:     info.SchemaYAML,
+			NewObjectFunc:  info.NewObjectFunc,
+			NewListFunc:    info.NewListFunc,
+			PrivateNewFunc: nil, // Not used for private API
+		}
 	}
+	return result
 }
 
 // getPublicResources returns the resource definitions for the public API.
+// Uses generated ResourceInfo from both public and private API packages.
 func getPublicResources() []apiserver.ResourceInfo {
-	return []apiserver.ResourceInfo{
-		{
-			GVK: runtimeschema.GroupVersionKind{
-				Group:   "test.orlop.thetechnick.ninja",
-				Version: "v1",
-				Kind:    "Object",
-			},
-			Plural:         publicv1.ObjectPlural,
-			SchemaYAML:     publicv1.ObjectSchemaYAML,
-			NewObjectFunc:  func() runtime.Object { return &publicv1.Object{} },
-			NewListFunc:    func() runtime.Object { return &publicv1.ObjectList{} },
-			PrivateNewFunc: func() runtime.Object { return &privatev1.Object{} },
-		},
-		{
-			GVK: runtimeschema.GroupVersionKind{
-				Group:   "test.orlop.thetechnick.ninja",
-				Version: "v1",
-				Kind:    "Other",
-			},
-			Plural:         publicv1.OtherPlural,
-			SchemaYAML:     publicv1.OtherSchemaYAML,
-			NewObjectFunc:  func() runtime.Object { return &publicv1.Other{} },
-			NewListFunc:    func() runtime.Object { return &publicv1.OtherList{} },
-			PrivateNewFunc: func() runtime.Object { return &privatev1.Other{} },
-		},
+	// Get public API resource infos
+	publicInfos := publicv1.GetResourceInfos()
+	// Get private API resource infos for PrivateNewFunc
+	privateInfos := privatev1.GetResourceInfos()
+
+	// Create map of private constructors by Kind
+	privateCtors := make(map[string]func() runtime.Object)
+	for _, info := range privateInfos {
+		privateCtors[info.GVK.Kind] = info.NewObjectFunc
 	}
+
+	result := make([]apiserver.ResourceInfo, len(publicInfos))
+	for i, info := range publicInfos {
+		result[i] = apiserver.ResourceInfo{
+			GVK:            info.GVK,
+			Plural:         info.Plural,
+			SchemaYAML:     info.SchemaYAML,
+			NewObjectFunc:  info.NewObjectFunc,
+			NewListFunc:    info.NewListFunc,
+			PrivateNewFunc: privateCtors[info.GVK.Kind], // Link to private constructor
+		}
+	}
+	return result
 }
 
 // getPrivateScheme creates and returns a runtime.Scheme with private API types registered.

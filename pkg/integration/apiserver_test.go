@@ -1031,18 +1031,44 @@ func TestDiscoveryOpenAPIV2(t *testing.T) {
 func TestWatch(t *testing.T) {
 	namespace := "default"
 
-	// Start a watch request in the background
+	// Start a watch request in the background with context
+	// Use a long timeout since watch streams are long-lived
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	watchURL := fmt.Sprintf("%s/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects?watch=true", baseURL, namespace)
 
-	watchReq, err := http.NewRequest("GET", watchURL, nil)
+	watchReq, err := http.NewRequestWithContext(ctx, "GET", watchURL, nil)
 	if err != nil {
 		t.Fatalf("Failed to create watch request: %v", err)
 	}
 
+	// Don't set a client timeout - the watch stream is long-lived
+	// The context timeout will handle overall test timeout
 	client := &http.Client{}
-	watchResp, err := client.Do(watchReq)
-	if err != nil {
-		t.Fatalf("Failed to start watch: %v", err)
+
+	// For streaming responses, we need to handle the connection differently
+	// Start the request in a goroutine so we can handle the streaming response
+	type respResult struct {
+		resp *http.Response
+		err  error
+	}
+	respCh := make(chan respResult, 1)
+
+	go func() {
+		resp, err := client.Do(watchReq)
+		respCh <- respResult{resp, err}
+	}()
+
+	var watchResp *http.Response
+	select {
+	case result := <-respCh:
+		if result.err != nil {
+			t.Fatalf("Failed to start watch: %v", result.err)
+		}
+		watchResp = result.resp
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for watch connection")
 	}
 	defer watchResp.Body.Close()
 
@@ -1091,7 +1117,8 @@ func TestWatch(t *testing.T) {
 
 	doRequest(t, "POST", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", namespace), createPayload)
 
-	// Wait for ADDED event
+	// Wait for ADDED event and extract resourceVersion
+	var currentResourceVersion string
 	select {
 	case event := <-events:
 		if event["type"] != "ADDED" {
@@ -1102,17 +1129,19 @@ func TestWatch(t *testing.T) {
 		if metadata["name"] != "watch-test" {
 			t.Errorf("Expected name watch-test, got %s", metadata["name"])
 		}
+		currentResourceVersion = metadata["resourceVersion"].(string)
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timeout waiting for ADDED event")
 	}
 
-	// Update the object
+	// Update the object - must include resourceVersion for optimistic concurrency
 	updatePayload := map[string]interface{}{
 		"apiVersion": "test.orlop.thetechnick.ninja/v1",
 		"kind":       "Object",
 		"metadata": map[string]interface{}{
-			"name":      "watch-test",
-			"namespace": namespace,
+			"name":            "watch-test",
+			"namespace":       namespace,
+			"resourceVersion": currentResourceVersion,
 		},
 		"spec": map[string]interface{}{
 			"publicField":   "updated",

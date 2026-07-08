@@ -7,29 +7,16 @@ import (
 	"github.com/thetechnick/orlop/pkg/apiserver/handlers"
 	pkgschema "github.com/thetechnick/orlop/pkg/apiserver/schema"
 	"github.com/thetechnick/orlop/pkg/apiserver/storage"
+	"github.com/thetechnick/orlop/pkg/apiserver/types"
 	apiext "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
 	"k8s.io/apimachinery/pkg/runtime"
-	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
 )
 
-// ResourceInfo describes a single API resource type.
-type ResourceInfo struct {
-	// GVK is the GroupVersionKind for this resource
-	GVK runtimeschema.GroupVersionKind
-	// Plural is the plural name for the resource (e.g., "objects")
-	Plural string
-	// SchemaYAML is the OpenAPI v3 schema in YAML format
-	SchemaYAML string
-	// NewObjectFunc creates a new instance of the resource
-	NewObjectFunc func() runtime.Object
-	// NewListFunc creates a new list instance
-	NewListFunc func() runtime.Object
-	// PrivateNewFunc creates a new instance of the private resource (for converting handlers)
-	PrivateNewFunc func() runtime.Object
-}
+// ResourceInfo is re-exported from types package for convenience.
+type ResourceInfo = types.ResourceInfo
 
 // ResourceRegistry manages API resource registrations and their stores.
 type ResourceRegistry struct {

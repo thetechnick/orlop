@@ -187,13 +187,17 @@ func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, op
 	// Set headers for streaming
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Transfer-Encoding", "chunked")
-	w.WriteHeader(http.StatusOK)
 
 	// Get flusher for streaming
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		return
 	}
+
+	w.WriteHeader(http.StatusOK)
+	// CRITICAL: Flush immediately after WriteHeader to send headers to client
+	// This allows the client's Do() to return before we start streaming events
+	flusher.Flush()
 
 	// Stream events
 	encoder := json.NewEncoder(w)
