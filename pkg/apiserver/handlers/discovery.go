@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"strings"
+	"sync"
+	"time"
 
+	"github.com/munnerz/goautoneg"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
+	openapihandler "k8s.io/kube-openapi/pkg/handler"
+	openapispec "k8s.io/kube-openapi/pkg/validation/spec"
 	"sigs.k8s.io/yaml"
 )
 
@@ -30,7 +33,11 @@ type ResourceProvider interface {
 
 // DiscoveryHandler handles API discovery requests.
 type DiscoveryHandler struct {
-	resources []ResourceInfo
+	resources     []ResourceInfo
+	openAPIV2Spec *openapispec.Swagger
+	openAPIV2Once sync.Once
+	v2JSONCache   []byte
+	v2ProtoCache  []byte
 }
 
 // NewDiscoveryHandler creates a new discovery handler.
@@ -190,8 +197,6 @@ func (h *DiscoveryHandler) APIResourceList(w http.ResponseWriter, r *http.Reques
 // OpenAPIV3 handles GET /openapi/v3
 // Returns the list of available OpenAPI v3 group versions.
 func (h *DiscoveryHandler) OpenAPIV3(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("[DEBUG] OpenAPIV3 request: %s %s (Accept: %s)\n", r.Method, r.URL.Path, r.Header.Get("Accept"))
-
 	// Build a list of group versions
 	groupVersions := make(map[string]bool)
 	for _, res := range h.resources {
@@ -219,7 +224,6 @@ func (h *DiscoveryHandler) OpenAPIV3(w http.ResponseWriter, r *http.Request) {
 // OpenAPIV3GroupVersion handles GET /openapi/v3/apis/{group}/{version}
 // Returns the OpenAPI v3 schema for a specific group version.
 func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.Request, group, version string) {
-	fmt.Printf("[DEBUG] OpenAPIV3GroupVersion request: %s %s (Accept: %s, group=%s, version=%s)\n", r.Method, r.URL.Path, r.Header.Get("Accept"), group, version)
 	gv := runtimeschema.GroupVersion{Group: group, Version: version}
 
 	// Build OpenAPI v3 document
@@ -409,40 +413,13 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 		"schemas": schemas,
 	}
 
-	// Debug: print the schema structure to see what we're returning
-	if len(schemas) > 0 {
-		fmt.Printf("[DEBUG] Returning OpenAPI v3 schema with %d schemas and %d paths\n", len(schemas), len(spec["paths"].(map[string]interface{})))
-		for schemaName := range schemas {
-			fmt.Printf("[DEBUG]   Schema: %s\n", schemaName)
-		}
-		// Write the spec to a temp file for inspection
-		if debugFile, err := os.Create("/tmp/openapi-v3-debug.json"); err == nil {
-			defer debugFile.Close()
-			encoder := json.NewEncoder(debugFile)
-			encoder.SetIndent("", "  ")
-			encoder.Encode(spec)
-			fmt.Printf("[DEBUG] Wrote OpenAPI v3 spec to /tmp/openapi-v3-debug.json\n")
-		}
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(spec)
 }
 
-// OpenAPIV2 handles GET /openapi/v2
-// Returns the OpenAPI v2 (Swagger 2.0) specification for all APIs.
-func (h *DiscoveryHandler) OpenAPIV2(w http.ResponseWriter, r *http.Request) {
-	fmt.Printf("[DEBUG] OpenAPIV2 request: %s %s (Accept: %s)\n", r.Method, r.URL.Path, r.Header.Get("Accept"))
-
-	// Check Accept header for protobuf request
-	accept := r.Header.Get("Accept")
-	if strings.Contains(accept, "protobuf") || strings.Contains(accept, "proto-openapi") {
-		// kubectl requested protobuf but we don't support it yet
-		// Return JSON anyway with correct Content-Type - kubectl should handle gracefully
-		fmt.Printf("[DEBUG] Protobuf requested but not supported, returning JSON\n")
-	}
-
+// buildOpenAPIV2Spec builds the OpenAPI v2 spec as a openapispec.Swagger object.
+func (h *DiscoveryHandler) buildOpenAPIV2Spec() *openapispec.Swagger {
 	// Build OpenAPI v2 (Swagger 2.0) document
 	spec := map[string]interface{}{
 		"swagger": "2.0",
@@ -726,15 +703,87 @@ func (h *DiscoveryHandler) OpenAPIV2(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Determine response format based on Accept header
-	if strings.Contains(accept, "protobuf") || strings.Contains(accept, "proto-openapi") {
-		// Return 501 Not Implemented for protobuf requests
-		// kubectl will fall back to using OpenAPI v3
-		http.Error(w, "Protobuf encoding for OpenAPI v2 not implemented. Use OpenAPI v3 instead.", http.StatusNotImplemented)
+	// Convert the map-based spec to JSON, then unmarshal into spec.Swagger
+	specJSON, err := json.Marshal(spec)
+	if err != nil {
+		return nil
+	}
+
+	var swagger openapispec.Swagger
+	if err := json.Unmarshal(specJSON, &swagger); err != nil {
+		return nil
+	}
+
+	return &swagger
+}
+
+// OpenAPIV2 handles GET /openapi/v2
+// Returns the OpenAPI v2 (Swagger 2.0) specification in JSON or protobuf format.
+func (h *DiscoveryHandler) OpenAPIV2(w http.ResponseWriter, r *http.Request) {
+	// Initialize the OpenAPI v2 spec and caches once (lazy initialization)
+	h.openAPIV2Once.Do(func() {
+		swagger := h.buildOpenAPIV2Spec()
+		if swagger == nil {
+			return
+		}
+		h.openAPIV2Spec = swagger
+
+		// Build JSON cache
+		jsonData, err := json.Marshal(swagger)
+		if err != nil {
+			fmt.Printf("[ERROR] Failed to marshal OpenAPI v2 spec to JSON: %v\n", err)
+			return
+		}
+		h.v2JSONCache = jsonData
+
+		// Build protobuf cache using kube-openapi's ToProtoBinary
+		protoData, err := openapihandler.ToProtoBinary(jsonData)
+		if err != nil {
+			// Log error but continue - protobuf support is optional
+			return
+		}
+		h.v2ProtoCache = protoData
+	})
+
+	if h.openAPIV2Spec == nil {
+		http.Error(w, "Failed to build OpenAPI v2 spec", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(spec)
+	// Parse Accept header to determine response format
+	accept := r.Header.Get("Accept")
+	if accept == "" {
+		accept = "*/*"
+	}
+
+	// Content negotiation
+	accepted := []struct {
+		Type                string
+		SubType             string
+		ReturnedContentType string
+		Data                []byte
+	}{
+		{"application", "json", "application/json", h.v2JSONCache},
+		{"application", "com.github.proto-openapi.spec.v2@v1.0+protobuf", "application/com.github.proto-openapi.spec.v2.v1.0+protobuf", h.v2ProtoCache},
+		{"application", "com.github.proto-openapi.spec.v2.v1.0+protobuf", "application/com.github.proto-openapi.spec.v2.v1.0+protobuf", h.v2ProtoCache},
+	}
+
+	clauses := goautoneg.ParseAccept(accept)
+	w.Header().Add("Vary", "Accept")
+
+	for _, clause := range clauses {
+		for _, a := range accepted {
+			if (clause.Type == a.Type || clause.Type == "*") &&
+				(clause.SubType == a.SubType || clause.SubType == "*") {
+				w.Header().Set("Content-Type", a.ReturnedContentType)
+				w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+				w.WriteHeader(http.StatusOK)
+				w.Write(a.Data)
+				return
+			}
+		}
+	}
+
+	// No acceptable format found
+	w.WriteHeader(http.StatusNotAcceptable)
 }
