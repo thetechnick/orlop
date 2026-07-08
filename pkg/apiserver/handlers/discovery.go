@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -189,6 +190,8 @@ func (h *DiscoveryHandler) APIResourceList(w http.ResponseWriter, r *http.Reques
 // OpenAPIV3 handles GET /openapi/v3
 // Returns the list of available OpenAPI v3 group versions.
 func (h *DiscoveryHandler) OpenAPIV3(w http.ResponseWriter, r *http.Request) {
+	fmt.Printf("[DEBUG] OpenAPIV3 request: %s %s (Accept: %s)\n", r.Method, r.URL.Path, r.Header.Get("Accept"))
+
 	// Build a list of group versions
 	groupVersions := make(map[string]bool)
 	for _, res := range h.resources {
@@ -216,6 +219,7 @@ func (h *DiscoveryHandler) OpenAPIV3(w http.ResponseWriter, r *http.Request) {
 // OpenAPIV3GroupVersion handles GET /openapi/v3/apis/{group}/{version}
 // Returns the OpenAPI v3 schema for a specific group version.
 func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.Request, group, version string) {
+	fmt.Printf("[DEBUG] OpenAPIV3GroupVersion request: %s %s (Accept: %s, group=%s, version=%s)\n", r.Method, r.URL.Path, r.Header.Get("Accept"), group, version)
 	gv := runtimeschema.GroupVersion{Group: group, Version: version}
 
 	// Build OpenAPI v3 document
@@ -264,8 +268,25 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 		// Schema reference for responses
 		schemaRef := "#/components/schemas/" + schemaName
 
+		// Common parameters
+		namespaceParam := map[string]interface{}{
+			"name":        "namespace",
+			"in":          "path",
+			"required":    true,
+			"schema":      map[string]interface{}{"type": "string"},
+			"description": "object namespace",
+		}
+		nameParam := map[string]interface{}{
+			"name":        "name",
+			"in":          "path",
+			"required":    true,
+			"schema":      map[string]interface{}{"type": "string"},
+			"description": "name of the " + res.GVK.Kind,
+		}
+
 		// Collection operations
 		paths[basePath] = map[string]interface{}{
+			"parameters": []interface{}{namespaceParam},
 			"get": map[string]interface{}{
 				"description": "list " + res.Plural,
 				"responses": map[string]interface{}{
@@ -301,6 +322,7 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 		// Individual resource operations
 		itemPath := basePath + "/{name}"
 		paths[itemPath] = map[string]interface{}{
+			"parameters": []interface{}{namespaceParam, nameParam},
 			"get": map[string]interface{}{
 				"description": "read the specified " + res.GVK.Kind,
 				"responses": map[string]interface{}{
@@ -344,6 +366,7 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 		// Status subresource
 		statusPath := itemPath + "/status"
 		paths[statusPath] = map[string]interface{}{
+			"parameters": []interface{}{namespaceParam, nameParam},
 			"get": map[string]interface{}{
 				"description": "read status of the specified " + res.GVK.Kind,
 				"responses": map[string]interface{}{
@@ -386,6 +409,22 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 		"schemas": schemas,
 	}
 
+	// Debug: print the schema structure to see what we're returning
+	if len(schemas) > 0 {
+		fmt.Printf("[DEBUG] Returning OpenAPI v3 schema with %d schemas and %d paths\n", len(schemas), len(spec["paths"].(map[string]interface{})))
+		for schemaName := range schemas {
+			fmt.Printf("[DEBUG]   Schema: %s\n", schemaName)
+		}
+		// Write the spec to a temp file for inspection
+		if debugFile, err := os.Create("/tmp/openapi-v3-debug.json"); err == nil {
+			defer debugFile.Close()
+			encoder := json.NewEncoder(debugFile)
+			encoder.SetIndent("", "  ")
+			encoder.Encode(spec)
+			fmt.Printf("[DEBUG] Wrote OpenAPI v3 spec to /tmp/openapi-v3-debug.json\n")
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(spec)
@@ -394,14 +433,14 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 // OpenAPIV2 handles GET /openapi/v2
 // Returns the OpenAPI v2 (Swagger 2.0) specification for all APIs.
 func (h *DiscoveryHandler) OpenAPIV2(w http.ResponseWriter, r *http.Request) {
-	// Check Accept header - we only support JSON, not protobuf
+	fmt.Printf("[DEBUG] OpenAPIV2 request: %s %s (Accept: %s)\n", r.Method, r.URL.Path, r.Header.Get("Accept"))
+
+	// Check Accept header for protobuf request
 	accept := r.Header.Get("Accept")
 	if strings.Contains(accept, "protobuf") || strings.Contains(accept, "proto-openapi") {
-		// Return 406 to tell kubectl we don't support protobuf
-		// This forces kubectl to fall back to requesting JSON
-		w.WriteHeader(http.StatusNotAcceptable)
-		w.Write([]byte("protobuf encoding not supported, use application/json"))
-		return
+		// kubectl requested protobuf but we don't support it yet
+		// Return JSON anyway with correct Content-Type - kubectl should handle gracefully
+		fmt.Printf("[DEBUG] Protobuf requested but not supported, returning JSON\n")
 	}
 
 	// Build OpenAPI v2 (Swagger 2.0) document
@@ -432,6 +471,15 @@ func (h *DiscoveryHandler) OpenAPIV2(w http.ResponseWriter, r *http.Request) {
 			var schemaObj map[string]interface{}
 			if err := yaml.Unmarshal([]byte(res.SchemaYAML), &schemaObj); err != nil {
 				continue
+			}
+
+			// Add x-kubernetes-group-version-kind extension
+			schemaObj["x-kubernetes-group-version-kind"] = []map[string]interface{}{
+				{
+					"group":   res.GVK.Group,
+					"version": res.GVK.Version,
+					"kind":    res.GVK.Kind,
+				},
 			}
 
 			// Add definition
@@ -676,6 +724,14 @@ func (h *DiscoveryHandler) OpenAPIV2(w http.ResponseWriter, r *http.Request) {
 				},
 			}
 		}
+	}
+
+	// Determine response format based on Accept header
+	if strings.Contains(accept, "protobuf") || strings.Contains(accept, "proto-openapi") {
+		// Return 501 Not Implemented for protobuf requests
+		// kubectl will fall back to using OpenAPI v3
+		http.Error(w, "Protobuf encoding for OpenAPI v2 not implemented. Use OpenAPI v3 instead.", http.StatusNotImplemented)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
