@@ -785,6 +785,103 @@ func TestDiscoveryOpenAPIV3GroupVersion(t *testing.T) {
 	}
 }
 
+func TestSharedResourceVersion(t *testing.T) {
+	namespace := "default"
+
+	// List objects initially - should get initial resource version
+	resp, body := doRequest(t, "GET", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", namespace), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", resp.StatusCode, body)
+	}
+
+	var initialList map[string]interface{}
+	json.Unmarshal([]byte(body), &initialList)
+	initialMetadata := initialList["metadata"].(map[string]interface{})
+	initialRV := initialMetadata["resourceVersion"].(string)
+
+	// Create an Object
+	obj1Payload := map[string]interface{}{
+		"apiVersion": "test.orlop.thetechnick.ninja/v1",
+		"kind":       "Object",
+		"metadata": map[string]interface{}{
+			"name":      "test-obj",
+			"namespace": namespace,
+		},
+		"spec": map[string]interface{}{
+			"publicField":   "test",
+			"internalField": "internal",
+			"nested": map[string]interface{}{
+				"publicField":   "nested",
+				"internalField": "nested-internal",
+			},
+		},
+	}
+
+	resp, body = doRequest(t, "POST", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", namespace), obj1Payload)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Expected status 201, got %d: %s", resp.StatusCode, body)
+	}
+
+	var createdObj map[string]interface{}
+	json.Unmarshal([]byte(body), &createdObj)
+	objMetadata := createdObj["metadata"].(map[string]interface{})
+	objRV := objMetadata["resourceVersion"].(string)
+
+	// ResourceVersion should have incremented
+	if objRV == initialRV {
+		t.Errorf("Expected resource version to increment after create, got %s", objRV)
+	}
+
+	// Create an Other (different resource type)
+	other1Payload := map[string]interface{}{
+		"apiVersion": "test.orlop.thetechnick.ninja/v1",
+		"kind":       "Other",
+		"metadata": map[string]interface{}{
+			"name":      "test-other",
+			"namespace": namespace,
+		},
+		"spec": map[string]interface{}{
+			"publicField":   "test",
+			"internalField": "internal",
+		},
+	}
+
+	resp, body = doRequest(t, "POST", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/others", namespace), other1Payload)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Expected status 201, got %d: %s", resp.StatusCode, body)
+	}
+
+	var createdOther map[string]interface{}
+	json.Unmarshal([]byte(body), &createdOther)
+	otherMetadata := createdOther["metadata"].(map[string]interface{})
+	otherRV := otherMetadata["resourceVersion"].(string)
+
+	// ResourceVersion should continue incrementing across resource types
+	if otherRV <= objRV {
+		t.Errorf("Expected resource version to be shared across types and increment. Object RV: %s, Other RV: %s", objRV, otherRV)
+	}
+
+	// List objects - should return current resource version
+	resp, body = doRequest(t, "GET", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", namespace), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", resp.StatusCode, body)
+	}
+
+	var objectsList map[string]interface{}
+	json.Unmarshal([]byte(body), &objectsList)
+	listMetadata := objectsList["metadata"].(map[string]interface{})
+	listRV := listMetadata["resourceVersion"].(string)
+
+	// List resourceVersion should match the latest resourceVersion (from Other)
+	if listRV != otherRV {
+		t.Errorf("Expected list resourceVersion to be current (%s), got %s", otherRV, listRV)
+	}
+
+	// Cleanup
+	doRequest(t, "DELETE", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/test-obj", namespace), nil)
+	doRequest(t, "DELETE", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/others/test-other", namespace), nil)
+}
+
 func TestOtherResource(t *testing.T) {
 	namespace := "default"
 	name := "test-other"

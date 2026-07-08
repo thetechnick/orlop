@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -11,22 +12,39 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// MemoryStore implements ResourceStore using an in-memory map.
-// Each MemoryStore instance is for a specific resource type.
-type MemoryStore struct {
-	mu                     sync.RWMutex
-	resourceType           string
-	objects                map[string]runtime.Object // namespace/name -> object
-	resourceVersionCounter int64
+// MemoryBackend provides shared state for all MemoryStore instances.
+type MemoryBackend struct {
+	resourceVersionCounter atomic.Int64
 }
 
-// NewMemoryStore creates a new in-memory storage backend for a specific resource type.
-func NewMemoryStore(resourceType string) *MemoryStore {
+// NewMemoryBackend creates a new memory backend with shared resource version counter.
+func NewMemoryBackend() *MemoryBackend {
+	return &MemoryBackend{}
+}
+
+// NewStore creates a new MemoryStore for a specific resource type that shares
+// the resource version counter with other stores from this backend.
+func (b *MemoryBackend) NewStore(resourceType string) *MemoryStore {
 	return &MemoryStore{
-		resourceType:           resourceType,
-		objects:                make(map[string]runtime.Object),
-		resourceVersionCounter: 0,
+		backend:      b,
+		resourceType: resourceType,
+		objects:      make(map[string]runtime.Object),
 	}
+}
+
+// CurrentResourceVersion returns the current resource version.
+func (b *MemoryBackend) CurrentResourceVersion() string {
+	return fmt.Sprintf("%d", b.resourceVersionCounter.Load())
+}
+
+// MemoryStore implements ResourceStore using an in-memory map.
+// Each MemoryStore instance is for a specific resource type but shares
+// a resource version counter with other stores from the same backend.
+type MemoryStore struct {
+	mu           sync.RWMutex
+	backend      *MemoryBackend
+	resourceType string
+	objects      map[string]runtime.Object // namespace/name -> object
 }
 
 // Create creates a new resource.
@@ -40,9 +58,9 @@ func (s *MemoryStore) Create(namespace, name string, obj runtime.Object) error {
 		return errors.NewAlreadyExists(schema.GroupResource{Resource: s.resourceType}, name)
 	}
 
-	// Set resource version
-	s.resourceVersionCounter++
-	if err := s.setResourceVersion(obj, s.resourceVersionCounter); err != nil {
+	// Set resource version using shared counter
+	newVersion := s.backend.resourceVersionCounter.Add(1)
+	if err := s.setResourceVersion(obj, newVersion); err != nil {
 		return err
 	}
 
@@ -126,9 +144,9 @@ func (s *MemoryStore) Update(namespace, name string, obj runtime.Object) error {
 		)
 	}
 
-	// Increment resource version
-	s.resourceVersionCounter++
-	if err := s.setResourceVersion(obj, s.resourceVersionCounter); err != nil {
+	// Increment resource version using shared counter
+	newVersion := s.backend.resourceVersionCounter.Add(1)
+	if err := s.setResourceVersion(obj, newVersion); err != nil {
 		return err
 	}
 
@@ -182,4 +200,9 @@ func (s *MemoryStore) setResourceVersion(obj runtime.Object, version int64) erro
 	}
 	accessor.SetResourceVersion(fmt.Sprintf("%d", version))
 	return nil
+}
+
+// CurrentResourceVersion returns the current resource version of the backend.
+func (s *MemoryStore) CurrentResourceVersion() string {
+	return s.backend.CurrentResourceVersion()
 }

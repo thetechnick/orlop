@@ -193,7 +193,7 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 		"apiVersion": h.gvk.Group + "/" + h.gvk.Version,
 		"kind":       h.gvk.Kind + "List",
 		"metadata": map[string]interface{}{
-			"resourceVersion": "",
+			"resourceVersion": h.store.CurrentResourceVersion(),
 		},
 		"items": publicObjects,
 	}

@@ -151,28 +151,13 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create list object
-	list := h.newListFunc()
-	listAccessor, err := meta.ListAccessor(list)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to access list metadata: %v", err))
-		return
-	}
-
-	// Set list metadata
-	list.GetObjectKind().SetGroupVersionKind(runtimeschema.GroupVersionKind{
-		Group:   h.gvk.Group,
-		Version: h.gvk.Version,
-		Kind:    h.gvk.Kind + "List",
-	})
-
 	// Use reflection to set items - this is a simplified approach
 	// In production, you'd want type-specific list construction
 	listMap := map[string]interface{}{
 		"apiVersion": h.gvk.Group + "/" + h.gvk.Version,
 		"kind":       h.gvk.Kind + "List",
 		"metadata": map[string]interface{}{
-			"resourceVersion": listAccessor.GetResourceVersion(),
+			"resourceVersion": h.store.CurrentResourceVersion(),
 		},
 		"items": objects,
 	}

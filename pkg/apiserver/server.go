@@ -31,6 +31,9 @@ type Options struct {
 
 // New creates a new API server with the given options.
 func New(opts Options) (*Server, error) {
+	// Create shared memory backend for consistent resource versioning
+	backend := storage.NewMemoryBackend()
+
 	// Create private API
 	privateRegistry := NewResourceRegistry()
 	RegisterTestResources(privateRegistry)
@@ -38,7 +41,7 @@ func New(opts Options) (*Server, error) {
 	// Create per-type stores for private API
 	privateStores := make(map[string]storage.ResourceStore)
 	for _, res := range privateRegistry.GetResources() {
-		privateStores[res.Plural] = storage.NewMemoryStore(res.Plural)
+		privateStores[res.Plural] = backend.NewStore(res.Plural)
 	}
 
 	privateRouter, err := setupRouter(privateStores, privateRegistry, opts.CORSOrigins)
@@ -69,7 +72,7 @@ func New(opts Options) (*Server, error) {
 			if privateStore, ok := privateStores[res.Plural]; ok {
 				publicStores[res.Plural] = privateStore
 			} else {
-				publicStores[res.Plural] = storage.NewMemoryStore(res.Plural)
+				publicStores[res.Plural] = backend.NewStore(res.Plural)
 			}
 		}
 

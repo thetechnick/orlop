@@ -30,4 +30,8 @@ type ResourceStore interface {
 
 	// Delete deletes a resource by namespace and name.
 	Delete(namespace, name string) error
+
+	// CurrentResourceVersion returns the current resource version of the store.
+	// This is used for list metadata to indicate the version at which the list was served.
+	CurrentResourceVersion() string
 }
