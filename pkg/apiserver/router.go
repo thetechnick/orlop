@@ -66,6 +66,7 @@ func setupRouter(stores map[string]storage.ResourceStore, registry *ResourceRegi
 					r.Get("/"+plural, handler.List)
 					r.Get("/"+plural+"/{name}", handler.Get)
 					r.Put("/"+plural+"/{name}", handler.Update)
+					r.Patch("/"+plural+"/{name}", handler.Patch)
 					r.Delete("/"+plural+"/{name}", handler.Delete)
 
 					// Status subresource
@@ -144,6 +145,7 @@ func setupConvertingRouter(stores map[string]storage.ResourceStore, registry *Re
 					r.Get("/"+plural, handler.List)
 					r.Get("/"+plural+"/{name}", handler.Get)
 					r.Put("/"+plural+"/{name}", handler.Update)
+					r.Patch("/"+plural+"/{name}", handler.Patch)
 					r.Delete("/"+plural+"/{name}", handler.Delete)
 
 					// Status subresource

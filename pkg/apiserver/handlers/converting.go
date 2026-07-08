@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -319,6 +320,120 @@ func (h *ConvertingResourceHandler) Update(w http.ResponseWriter, r *http.Reques
 	accessor.SetName(name)
 
 	// Convert public to private, preserving internal fields
+	privateObj, err := h.converter.PublicToPrivate(publicObj, existingPrivate)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to convert to private: %v", err))
+		return
+	}
+
+	// Check if spec changed and increment generation if so
+	existingAccessor, _ := meta.Accessor(existingPrivate)
+	privateAccessor, _ := meta.Accessor(privateObj)
+	if specChanged(existingPrivate, privateObj) {
+		privateAccessor.SetGeneration(existingAccessor.GetGeneration() + 1)
+	} else {
+		privateAccessor.SetGeneration(existingAccessor.GetGeneration())
+	}
+
+	// Set GVK
+	privateObj.GetObjectKind().SetGroupVersionKind(h.gvk)
+
+	// Update object in storage
+	if err := h.store.Update(namespace, name, privateObj); err != nil {
+		if errors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else if errors.IsConflict(err) {
+			writeError(w, http.StatusConflict, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update object: %v", err))
+		}
+		return
+	}
+
+	// Convert back to public for response
+	responsePublic, _ := h.converter.PrivateToPublic(privateObj)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(responsePublic)
+}
+
+// Patch handles PATCH requests to partially update a resource.
+func (h *ConvertingResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
+	namespace := chi.URLParam(r, "namespace")
+	name := chi.URLParam(r, "name")
+
+	// Get existing private object
+	existingPrivate, err := h.store.Get(namespace, name)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get object: %v", err))
+		}
+		return
+	}
+
+	// Convert to public for patching
+	existingPublic, err := h.converter.PrivateToPublic(existingPrivate)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to convert to public: %v", err))
+		return
+	}
+
+	// Read patch body
+	patchBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to read patch: %v", err))
+		return
+	}
+
+	// Convert existing public object to JSON
+	existingJSON, err := json.Marshal(existingPublic)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to marshal existing object: %v", err))
+		return
+	}
+
+	// Apply merge patch (same logic as ResourceHandler)
+	patchedJSON, err := jsonMergePatch(existingJSON, patchBytes)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("patch failed: %v", err))
+		return
+	}
+
+	// Convert to map for schema processing
+	var objMap map[string]interface{}
+	if err := json.Unmarshal(patchedJSON, &objMap); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to unmarshal patched object: %v", err))
+		return
+	}
+
+	// Process object (prune, default, validate) using public schema
+	if errs := h.processor.Process(objMap); len(errs) > 0 {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("validation failed: %v", errs.ToAggregate()))
+		return
+	}
+
+	// Convert to public typed object
+	objJSON, _ := json.Marshal(objMap)
+	publicObj := h.newObjectFunc()
+	if err := json.Unmarshal(objJSON, publicObj); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to unmarshal object: %v", err))
+		return
+	}
+
+	// Set metadata
+	accessor, err := meta.Accessor(publicObj)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to access metadata: %v", err))
+		return
+	}
+
+	accessor.SetNamespace(namespace)
+	accessor.SetName(name)
+
+	// Convert public to private
 	privateObj, err := h.converter.PublicToPrivate(publicObj, existingPrivate)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to convert to private: %v", err))
