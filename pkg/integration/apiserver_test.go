@@ -946,6 +946,53 @@ func TestCreateReturnsResourceVersion(t *testing.T) {
 	doRequest(t, "DELETE", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/%s", namespace, name), nil)
 }
 
+func TestDiscoveryOpenAPIV2(t *testing.T) {
+	resp, body := doRequest(t, "GET", "/openapi/v2", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d: %s", resp.StatusCode, body)
+	}
+
+	var spec map[string]interface{}
+	if err := json.Unmarshal([]byte(body), &spec); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+
+	// Check Swagger version
+	if spec["swagger"] != "2.0" {
+		t.Errorf("Expected swagger 2.0, got %s", spec["swagger"])
+	}
+
+	// Check info
+	info := spec["info"].(map[string]interface{})
+	if info["title"] == "" {
+		t.Error("Expected title in info")
+	}
+
+	// Check definitions
+	definitions := spec["definitions"].(map[string]interface{})
+	if len(definitions) == 0 {
+		t.Error("Expected at least one definition")
+	}
+
+	// Check paths
+	paths := spec["paths"].(map[string]interface{})
+	if len(paths) == 0 {
+		t.Error("Expected at least one path")
+	}
+
+	// Verify a specific path exists
+	foundObjectsPath := false
+	for path := range paths {
+		if path == "/apis/test.orlop.thetechnick.ninja/v1/namespaces/{namespace}/objects" {
+			foundObjectsPath = true
+			break
+		}
+	}
+	if !foundObjectsPath {
+		t.Error("Expected objects collection path not found")
+	}
+}
+
 func TestWatch(t *testing.T) {
 	namespace := "default"
 

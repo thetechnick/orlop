@@ -25,6 +25,7 @@ func setupRouter(stores map[string]storage.ResourceStore, registry *ResourceRegi
 
 	// Discovery endpoints (must be registered BEFORE resource routes to avoid shadowing)
 	r.Get("/apis", discoveryHandler.APIGroupList)
+	r.Get("/openapi/v2", discoveryHandler.OpenAPIV2)
 	r.Get("/openapi/v3", discoveryHandler.OpenAPIV3)
 
 	// Group resources by GroupVersion
@@ -101,6 +102,7 @@ func setupConvertingRouter(stores map[string]storage.ResourceStore, registry *Re
 
 	// Discovery endpoints (must be registered BEFORE resource routes to avoid shadowing)
 	r.Get("/apis", discoveryHandler.APIGroupList)
+	r.Get("/openapi/v2", discoveryHandler.OpenAPIV2)
 	r.Get("/openapi/v3", discoveryHandler.OpenAPIV3)
 
 	// Group resources by GroupVersion

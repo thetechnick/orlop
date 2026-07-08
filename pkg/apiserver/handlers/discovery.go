@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -328,6 +329,288 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 
 	spec["components"] = map[string]interface{}{
 		"schemas": schemas,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(spec)
+}
+
+// OpenAPIV2 handles GET /openapi/v2
+// Returns the OpenAPI v2 (Swagger 2.0) specification for all APIs.
+func (h *DiscoveryHandler) OpenAPIV2(w http.ResponseWriter, r *http.Request) {
+	// Build OpenAPI v2 (Swagger 2.0) document
+	spec := map[string]interface{}{
+		"swagger": "2.0",
+		"info": map[string]interface{}{
+			"title":   "Orlop API",
+			"version": "v1",
+		},
+		"paths":       map[string]interface{}{},
+		"definitions": map[string]interface{}{},
+	}
+
+	definitions := spec["definitions"].(map[string]interface{})
+	paths := spec["paths"].(map[string]interface{})
+
+	// Group resources by group/version
+	groupedResources := make(map[string][]ResourceInfo)
+	for _, res := range h.resources {
+		key := res.GVK.Group + "/" + res.GVK.Version
+		groupedResources[key] = append(groupedResources[key], res)
+	}
+
+	// Add definitions and paths for each resource
+	for gv, resources := range groupedResources {
+		for _, res := range resources {
+			// Parse the schema YAML
+			var schemaObj map[string]interface{}
+			if err := yaml.Unmarshal([]byte(res.SchemaYAML), &schemaObj); err != nil {
+				continue
+			}
+
+			// Add definition
+			defName := res.GVK.Group + "." + res.GVK.Version + "." + res.GVK.Kind
+			definitions[defName] = schemaObj
+
+			// Add paths for this resource
+			basePath := fmt.Sprintf("/apis/%s/namespaces/{namespace}/%s", gv, res.Plural)
+
+			// Collection operations
+			paths[basePath] = map[string]interface{}{
+				"get": map[string]interface{}{
+					"description": fmt.Sprintf("list objects of kind %s", res.GVK.Kind),
+					"operationId": fmt.Sprintf("list%s%s", res.GVK.Version, res.GVK.Kind),
+					"produces":    []string{"application/json"},
+					"parameters": []interface{}{
+						map[string]interface{}{
+							"name":        "namespace",
+							"in":          "path",
+							"required":    true,
+							"type":        "string",
+							"description": "object name and auth scope, such as for teams and projects",
+						},
+						map[string]interface{}{
+							"name":        "labelSelector",
+							"in":          "query",
+							"type":        "string",
+							"description": "A selector to restrict the list of returned objects by their labels",
+						},
+						map[string]interface{}{
+							"name":        "watch",
+							"in":          "query",
+							"type":        "boolean",
+							"description": "Watch for changes to the described resources",
+						},
+						map[string]interface{}{
+							"name":        "resourceVersion",
+							"in":          "query",
+							"type":        "string",
+							"description": "When specified with watch, shows changes that occur after that version",
+						},
+					},
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "OK",
+							"schema": map[string]interface{}{
+								"$ref": fmt.Sprintf("#/definitions/%s", defName),
+							},
+						},
+					},
+				},
+				"post": map[string]interface{}{
+					"description": fmt.Sprintf("create a %s", res.GVK.Kind),
+					"operationId": fmt.Sprintf("create%s%s", res.GVK.Version, res.GVK.Kind),
+					"produces":    []string{"application/json"},
+					"consumes":    []string{"application/json"},
+					"parameters": []interface{}{
+						map[string]interface{}{
+							"name":     "namespace",
+							"in":       "path",
+							"required": true,
+							"type":     "string",
+						},
+						map[string]interface{}{
+							"name":     "body",
+							"in":       "body",
+							"required": true,
+							"schema": map[string]interface{}{
+								"$ref": fmt.Sprintf("#/definitions/%s", defName),
+							},
+						},
+					},
+					"responses": map[string]interface{}{
+						"201": map[string]interface{}{
+							"description": "Created",
+							"schema": map[string]interface{}{
+								"$ref": fmt.Sprintf("#/definitions/%s", defName),
+							},
+						},
+					},
+				},
+			}
+
+			// Individual resource operations
+			itemPath := basePath + "/{name}"
+			paths[itemPath] = map[string]interface{}{
+				"get": map[string]interface{}{
+					"description": fmt.Sprintf("read the specified %s", res.GVK.Kind),
+					"operationId": fmt.Sprintf("read%s%s", res.GVK.Version, res.GVK.Kind),
+					"produces":    []string{"application/json"},
+					"parameters": []interface{}{
+						map[string]interface{}{
+							"name":     "namespace",
+							"in":       "path",
+							"required": true,
+							"type":     "string",
+						},
+						map[string]interface{}{
+							"name":        "name",
+							"in":          "path",
+							"required":    true,
+							"type":        "string",
+							"description": "name of the resource",
+						},
+					},
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "OK",
+							"schema": map[string]interface{}{
+								"$ref": fmt.Sprintf("#/definitions/%s", defName),
+							},
+						},
+					},
+				},
+				"put": map[string]interface{}{
+					"description": fmt.Sprintf("replace the specified %s", res.GVK.Kind),
+					"operationId": fmt.Sprintf("replace%s%s", res.GVK.Version, res.GVK.Kind),
+					"produces":    []string{"application/json"},
+					"consumes":    []string{"application/json"},
+					"parameters": []interface{}{
+						map[string]interface{}{
+							"name":     "namespace",
+							"in":       "path",
+							"required": true,
+							"type":     "string",
+						},
+						map[string]interface{}{
+							"name":     "name",
+							"in":       "path",
+							"required": true,
+							"type":     "string",
+						},
+						map[string]interface{}{
+							"name":     "body",
+							"in":       "body",
+							"required": true,
+							"schema": map[string]interface{}{
+								"$ref": fmt.Sprintf("#/definitions/%s", defName),
+							},
+						},
+					},
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "OK",
+							"schema": map[string]interface{}{
+								"$ref": fmt.Sprintf("#/definitions/%s", defName),
+							},
+						},
+					},
+				},
+				"delete": map[string]interface{}{
+					"description": fmt.Sprintf("delete a %s", res.GVK.Kind),
+					"operationId": fmt.Sprintf("delete%s%s", res.GVK.Version, res.GVK.Kind),
+					"produces":    []string{"application/json"},
+					"parameters": []interface{}{
+						map[string]interface{}{
+							"name":     "namespace",
+							"in":       "path",
+							"required": true,
+							"type":     "string",
+						},
+						map[string]interface{}{
+							"name":     "name",
+							"in":       "path",
+							"required": true,
+							"type":     "string",
+						},
+					},
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "OK",
+						},
+					},
+				},
+			}
+
+			// Status subresource
+			statusPath := itemPath + "/status"
+			paths[statusPath] = map[string]interface{}{
+				"get": map[string]interface{}{
+					"description": fmt.Sprintf("read status of the specified %s", res.GVK.Kind),
+					"operationId": fmt.Sprintf("read%s%sStatus", res.GVK.Version, res.GVK.Kind),
+					"produces":    []string{"application/json"},
+					"parameters": []interface{}{
+						map[string]interface{}{
+							"name":     "namespace",
+							"in":       "path",
+							"required": true,
+							"type":     "string",
+						},
+						map[string]interface{}{
+							"name":     "name",
+							"in":       "path",
+							"required": true,
+							"type":     "string",
+						},
+					},
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "OK",
+							"schema": map[string]interface{}{
+								"$ref": fmt.Sprintf("#/definitions/%s", defName),
+							},
+						},
+					},
+				},
+				"put": map[string]interface{}{
+					"description": fmt.Sprintf("replace status of the specified %s", res.GVK.Kind),
+					"operationId": fmt.Sprintf("replace%s%sStatus", res.GVK.Version, res.GVK.Kind),
+					"produces":    []string{"application/json"},
+					"consumes":    []string{"application/json"},
+					"parameters": []interface{}{
+						map[string]interface{}{
+							"name":     "namespace",
+							"in":       "path",
+							"required": true,
+							"type":     "string",
+						},
+						map[string]interface{}{
+							"name":     "name",
+							"in":       "path",
+							"required": true,
+							"type":     "string",
+						},
+						map[string]interface{}{
+							"name":     "body",
+							"in":       "body",
+							"required": true,
+							"schema": map[string]interface{}{
+								"$ref": fmt.Sprintf("#/definitions/%s", defName),
+							},
+						},
+					},
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "OK",
+							"schema": map[string]interface{}{
+								"$ref": fmt.Sprintf("#/definitions/%s", defName),
+							},
+						},
+					},
+				},
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
