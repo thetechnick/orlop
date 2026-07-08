@@ -35,14 +35,16 @@ func (g *Generator) generateSchemas(rootPath string) error {
 		return nil
 	}
 
-	// Find packages with root types
+	// Find packages with root types and get the directory where they're defined
 	var hasRootTypes bool
+	var versionedPkgDir string
 	for _, root := range roots {
 		root.NeedSyntax()
 		for _, file := range root.Syntax {
 			for _, comment := range file.Comments {
 				if strings.Contains(comment.Text(), "+kubebuilder:object:root") {
 					hasRootTypes = true
+					versionedPkgDir = root.Dir
 					break
 				}
 			}
@@ -59,14 +61,14 @@ func (g *Generator) generateSchemas(rootPath string) error {
 		return nil
 	}
 
-	// Generate CRDs first
-	crdOutputDir := roots[0].Dir
+	// Generate CRDs in the versioned directory where root types are defined
+	crdOutputDir := versionedPkgDir
 	if err := g.generateCRDs(roots, crdOutputDir); err != nil {
 		return fmt.Errorf("failed to generate CRDs: %w", err)
 	}
 
-	// Extract schemas and embed them
-	if err := g.embedSchemas(crdOutputDir); err != nil {
+	// Extract schemas and embed them in the same directory
+	if err := g.embedSchemas(crdOutputDir, crdOutputDir); err != nil {
 		return fmt.Errorf("failed to embed schemas: %w", err)
 	}
 
@@ -94,13 +96,13 @@ func (g *Generator) generateCRDs(roots []*loader.Package, outputDir string) erro
 	return nil
 }
 
-func (g *Generator) embedSchemas(dir string) error {
+func (g *Generator) embedSchemas(crdDir string, targetDir string) error {
 	var schemas []schemaInfo
 
-	// Find all YAML CRD files
-	entries, err := os.ReadDir(dir)
+	// Find all YAML CRD files in the CRD directory
+	entries, err := os.ReadDir(crdDir)
 	if err != nil {
-		return fmt.Errorf("failed to read directory %s: %w", dir, err)
+		return fmt.Errorf("failed to read directory %s: %w", crdDir, err)
 	}
 
 	for _, entry := range entries {
@@ -108,7 +110,7 @@ func (g *Generator) embedSchemas(dir string) error {
 			continue
 		}
 
-		crdPath := filepath.Join(dir, entry.Name())
+		crdPath := filepath.Join(crdDir, entry.Name())
 
 		// Read and parse CRD
 		data, err := os.ReadFile(crdPath)
@@ -147,9 +149,9 @@ func (g *Generator) embedSchemas(dir string) error {
 		return nil
 	}
 
-	// Generate Go file with embedded schemas
-	goFilePath := filepath.Join(dir, "zz_generated.schemas.go")
-	if err := g.generateSchemaGoFile(goFilePath, dir, schemas); err != nil {
+	// Generate Go file with embedded schemas in the target directory
+	goFilePath := filepath.Join(targetDir, "zz_generated.schemas.go")
+	if err := g.generateSchemaGoFile(goFilePath, targetDir, schemas); err != nil {
 		return fmt.Errorf("failed to generate schema Go file: %w", err)
 	}
 
@@ -300,11 +302,31 @@ func determinePackageName(dir string) (string, error) {
 }
 
 func determineGroupVersion(dir string) (group, version string, err error) {
-	// Look for groupversion_info.go file
+	// Look for groupversion_info.go file in current directory
 	groupVersionFile := filepath.Join(dir, "groupversion_info.go")
 	data, err := os.ReadFile(groupVersionFile)
+
+	// If not found in current dir, try looking in subdirectories (e.g., v1/)
 	if err != nil {
-		return "", "", fmt.Errorf("failed to read groupversion_info.go: %w", err)
+		// Try finding it in a versioned subdirectory
+		entries, readErr := os.ReadDir(dir)
+		if readErr == nil {
+			for _, entry := range entries {
+				if entry.IsDir() && strings.HasPrefix(entry.Name(), "v") {
+					versionedFile := filepath.Join(dir, entry.Name(), "groupversion_info.go")
+					data, err = os.ReadFile(versionedFile)
+					if err == nil {
+						groupVersionFile = versionedFile
+						break
+					}
+				}
+			}
+		}
+
+		// If still not found, return error
+		if err != nil {
+			return "", "", fmt.Errorf("failed to read groupversion_info.go: %w", err)
+		}
 	}
 
 	content := string(data)

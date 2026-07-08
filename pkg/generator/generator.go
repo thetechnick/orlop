@@ -122,8 +122,10 @@ func (g *Generator) Generate() error {
 		return fmt.Errorf("generating schemas for internal: %w", err)
 	}
 
-	// Note: Public API schemas are manually maintained in zz_generated.schemas.go
-	// They reference private API schemas since public APIs don't generate CRDs
+	fmt.Println("Generating schemas for public APIs...")
+	if err := g.generateSchemas(g.outputDir); err != nil {
+		return fmt.Errorf("generating schemas for public: %w", err)
+	}
 
 	fmt.Println("Generating conversion functions...")
 	if err := g.generateConversions(); err != nil {

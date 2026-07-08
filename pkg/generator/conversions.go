@@ -33,8 +33,8 @@ func customConversionNamer() *namer.NameStrategy {
 // customNameSystems returns custom name systems that avoid function name collisions
 func customNameSystems() namer.NameSystems {
 	return namer.NameSystems{
-		"public":    customConversionNamer(),
-		"raw":       namer.NewRawNamer("", nil),
+		"public": customConversionNamer(),
+		"raw":    namer.NewRawNamer("", nil),
 		"defaultfn": &namer.NameStrategy{
 			Prefix: "SetDefaults_",
 			Join: func(pre string, in []string, post string) string {
@@ -119,7 +119,7 @@ func (g *Generator) createConversionDocFile(pkgDir, relPath string) error {
 	}
 
 	// Construct internal package import path
-	internalImportPath := "github.com/thetechnick/orlop/apis/internal/" + strings.ReplaceAll(relPath, string(filepath.Separator), "/")
+	internalImportPath := "github.com/thetechnick/orlop/apis/private/" + strings.ReplaceAll(relPath, string(filepath.Separator), "/")
 
 	docContent := fmt.Sprintf(`// +k8s:conversion-gen=%s
 // +k8s:conversion-gen-external-types=%s
@@ -160,7 +160,7 @@ func (g *Generator) runConversionGenLib(pkgPath string) error {
 		customNameSystems(), // Use custom name systems to avoid duplicate names
 		conversiongen.DefaultNameSystem(),
 		myTargets,
-		"", // Don't pass buildTag here - it's for parser, not output
+		"",                // Don't pass buildTag here - it's for parser, not output
 		[]string{pkgPath}, // Input packages
 	); err != nil {
 		return fmt.Errorf("gengo.Execute failed: %w", err)

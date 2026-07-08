@@ -3,22 +3,137 @@
 package v1
 
 import (
-	privatev1 "github.com/thetechnick/orlop/apis/private/test/v1"
 	"github.com/thetechnick/orlop/pkg/apiserver/types"
+	apiext "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
+	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
 	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/yaml"
 )
 
-// Re-export constants from private API for convenience
-const (
-	ObjectPlural = privatev1.ObjectPlural
-	OtherPlural  = privatev1.OtherPlural
+// ObjectPlural is the plural name for Object resources.
+const ObjectPlural = "objects"
+
+// ObjectSchemaYAML contains the OpenAPI v3 schema for Object.
+const ObjectSchemaYAML = `
+properties:
+  apiVersion:
+    description: |-
+      APIVersion defines the versioned schema of this representation of an object.
+      Servers should convert recognized schemas to the latest internal value, and
+      may reject unrecognized values.
+      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+    type: string
+  kind:
+    description: |-
+      Kind is a string value representing the REST resource this object represents.
+      Servers may infer this from the endpoint the client submits requests to.
+      Cannot be updated.
+      In CamelCase.
+      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+    type: string
+  metadata:
+    type: object
+  spec:
+    properties:
+      defaultField:
+        default: default-value
+        type: string
+      nested:
+        properties:
+          publicField:
+            type: string
+        required:
+        - publicField
+        type: object
+      publicField:
+        type: string
+    required:
+    - nested
+    - publicField
+    type: object
+  status:
+    properties:
+      conditions:
+        items:
+          type: string
+        type: array
+    type: object
+type: object
+`
+
+// OtherPlural is the plural name for Other resources.
+const OtherPlural = "others"
+
+// OtherSchemaYAML contains the OpenAPI v3 schema for Other.
+const OtherSchemaYAML = `
+properties:
+  apiVersion:
+    description: |-
+      APIVersion defines the versioned schema of this representation of an object.
+      Servers should convert recognized schemas to the latest internal value, and
+      may reject unrecognized values.
+      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+    type: string
+  kind:
+    description: |-
+      Kind is a string value representing the REST resource this object represents.
+      Servers may infer this from the endpoint the client submits requests to.
+      Cannot be updated.
+      In CamelCase.
+      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+    type: string
+  metadata:
+    type: object
+  spec:
+    properties:
+      publicField:
+        type: string
+    required:
+    - publicField
+    type: object
+type: object
+`
+
+var (
+	// ObjectSchema is the parsed structural schema for Object.
+	ObjectSchema *schema.Structural
+
+	// OtherSchema is the parsed structural schema for Other.
+	OtherSchema *schema.Structural
 )
 
-// Re-export schema YAML from private API
-const (
-	ObjectSchemaYAML = privatev1.ObjectSchemaYAML
-	OtherSchemaYAML  = privatev1.OtherSchemaYAML
-)
+func init() {
+	var err error
+
+	// Parse Object schema
+	var objectPropsV1 apiextv1.JSONSchemaProps
+	if err := yaml.Unmarshal([]byte(ObjectSchemaYAML), &objectPropsV1); err != nil {
+		panic("failed to unmarshal Object schema: " + err.Error())
+	}
+	var objectProps apiext.JSONSchemaProps
+	if err := apiextv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(&objectPropsV1, &objectProps, nil); err != nil {
+		panic("failed to convert Object schema: " + err.Error())
+	}
+	ObjectSchema, err = schema.NewStructural(&objectProps)
+	if err != nil {
+		panic("failed to create structural schema for Object: " + err.Error())
+	}
+
+	// Parse Other schema
+	var otherPropsV1 apiextv1.JSONSchemaProps
+	if err := yaml.Unmarshal([]byte(OtherSchemaYAML), &otherPropsV1); err != nil {
+		panic("failed to unmarshal Other schema: " + err.Error())
+	}
+	var otherProps apiext.JSONSchemaProps
+	if err := apiextv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(&otherPropsV1, &otherProps, nil); err != nil {
+		panic("failed to convert Other schema: " + err.Error())
+	}
+	OtherSchema, err = schema.NewStructural(&otherProps)
+	if err != nil {
+		panic("failed to create structural schema for Other: " + err.Error())
+	}
+}
 
 // GetResourceInfos returns ResourceInfo definitions for all types in this package.
 // This can be used to configure an API server with these resources.
