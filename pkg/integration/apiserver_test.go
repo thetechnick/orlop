@@ -882,6 +882,70 @@ func TestSharedResourceVersion(t *testing.T) {
 	doRequest(t, "DELETE", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/others/test-other", namespace), nil)
 }
 
+func TestCreateReturnsResourceVersion(t *testing.T) {
+	namespace := "default"
+	name := "test-create-rv"
+
+	// Create object
+	createPayload := map[string]interface{}{
+		"apiVersion": "test.orlop.thetechnick.ninja/v1",
+		"kind":       "Object",
+		"metadata": map[string]interface{}{
+			"name":      name,
+			"namespace": namespace,
+		},
+		"spec": map[string]interface{}{
+			"publicField":   "public-value",
+			"internalField": "internal-value",
+			"nested": map[string]interface{}{
+				"publicField":   "nested-public",
+				"internalField": "nested-internal",
+			},
+		},
+	}
+
+	resp, body := doRequest(t, "POST", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", namespace), createPayload)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Expected status 201, got %d: %s", resp.StatusCode, body)
+	}
+
+	// Parse response
+	var created map[string]interface{}
+	if err := json.Unmarshal([]byte(body), &created); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+
+	// Check metadata
+	metadata := created["metadata"].(map[string]interface{})
+
+	// ResourceVersion should be set
+	rv, ok := metadata["resourceVersion"].(string)
+	if !ok || rv == "" {
+		t.Errorf("Expected resourceVersion to be set in create response, got: %v", metadata["resourceVersion"])
+	}
+
+	// UID should be set
+	uid, ok := metadata["uid"].(string)
+	if !ok || uid == "" {
+		t.Errorf("Expected uid to be set in create response, got: %v", metadata["uid"])
+	}
+
+	// CreationTimestamp should be set
+	creationTimestamp, ok := metadata["creationTimestamp"].(string)
+	if !ok || creationTimestamp == "" {
+		t.Errorf("Expected creationTimestamp to be set in create response, got: %v", metadata["creationTimestamp"])
+	}
+
+	// Generation should be 1
+	generation, ok := metadata["generation"].(float64)
+	if !ok || generation != 1 {
+		t.Errorf("Expected generation to be 1 in create response, got: %v", metadata["generation"])
+	}
+
+	// Cleanup
+	doRequest(t, "DELETE", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/%s", namespace, name), nil)
+}
+
 func TestOtherResource(t *testing.T) {
 	namespace := "default"
 	name := "test-other"

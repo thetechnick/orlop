@@ -122,10 +122,17 @@ func (h *ConvertingResourceHandler) Create(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Convert stored private object back to public to get ResourceVersion
+	responsePublic, err := h.converter.PrivateToPublic(privateObj)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to convert to public: %v", err))
+		return
+	}
+
 	// Return public representation
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(publicObj)
+	json.NewEncoder(w).Encode(responsePublic)
 }
 
 // Get handles GET requests to retrieve a single resource.
