@@ -25,14 +25,13 @@ import (
 // ConvertingResourceHandler wraps a ResourceHandler and performs conversions
 // between public and private API types.
 type ConvertingResourceHandler struct {
-	store          storage.ResourceStore
-	processor      *schema.Processor
-	converter      *conversion.Converter
-	gvk            runtimeschema.GroupVersionKind
-	resourceType   string
-	newObjectFunc  func() runtime.Object    // Public type constructor
-	newListFunc    func() client.ObjectList // Public list constructor
-	privateNewFunc func() client.Object     // Private type constructor
+	store         storage.ResourceStore
+	processor     *schema.Processor
+	converter     *conversion.Converter
+	gvk           runtimeschema.GroupVersionKind
+	resourceType  string
+	publicScheme  *runtime.Scheme // Scheme for public API types
+	privateScheme *runtime.Scheme // Scheme for private API types
 }
 
 // NewConvertingResourceHandler creates a new converting resource handler.
@@ -42,19 +41,17 @@ func NewConvertingResourceHandler(
 	converter *conversion.Converter,
 	gvk runtimeschema.GroupVersionKind,
 	resourceType string,
-	publicNewObjectFunc func() runtime.Object,
-	publicNewListFunc func() runtime.Object,
-	privateNewFunc func() runtime.Object,
+	publicScheme *runtime.Scheme,
+	privateScheme *runtime.Scheme,
 ) *ConvertingResourceHandler {
 	return &ConvertingResourceHandler{
-		store:          store,
-		processor:      processor,
-		converter:      converter,
-		gvk:            gvk,
-		resourceType:   resourceType,
-		newObjectFunc:  publicNewObjectFunc,
-		newListFunc:    func() client.ObjectList { return publicNewListFunc().(client.ObjectList) },
-		privateNewFunc: func() client.Object { return privateNewFunc().(client.Object) },
+		store:         store,
+		processor:     processor,
+		converter:     converter,
+		gvk:           gvk,
+		resourceType:  resourceType,
+		publicScheme:  publicScheme,
+		privateScheme: privateScheme,
 	}
 }
 
@@ -77,7 +74,11 @@ func (h *ConvertingResourceHandler) Create(w http.ResponseWriter, r *http.Reques
 
 	// Convert to public typed object
 	objJSON, _ := json.Marshal(objMap)
-	publicObj := h.newObjectFunc()
+	publicObj, err := h.publicScheme.New(h.gvk)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create public object: %v", err))
+		return
+	}
 	if err := json.Unmarshal(objJSON, publicObj); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to unmarshal object: %v", err))
 		return
@@ -105,7 +106,12 @@ func (h *ConvertingResourceHandler) Create(w http.ResponseWriter, r *http.Reques
 	publicObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Convert public to private (no existing object)
-	privateObj, err := h.converter.PublicToPrivate(publicObj, h.privateNewFunc())
+	privateObjRaw, err := h.privateScheme.New(h.gvk)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create private object: %v", err))
+		return
+	}
+	privateObj, err := h.converter.PublicToPrivate(publicObj, privateObjRaw.(client.Object))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to convert to private: %v", err))
 		return
@@ -215,14 +221,21 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Create list object
-	publicList := h.newListFunc()
+	listGVK := h.gvk.GroupVersion().WithKind(h.gvk.Kind + "List")
+	publicListRaw, err := h.publicScheme.New(listGVK)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create list object: %v", err))
+		return
+	}
+	publicList := publicListRaw.(client.ObjectList)
+
 	if err := meta.SetList(publicList, publicObjects); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to set list items: %v", err))
 		return
 	}
 
 	// Set metadata and GVK
-	publicList.GetObjectKind().SetGroupVersionKind(h.gvk.GroupVersion().WithKind(h.gvk.Kind + "List"))
+	publicList.GetObjectKind().SetGroupVersionKind(listGVK)
 	publicList.SetResourceVersion(privateList.GetResourceVersion())
 
 	w.Header().Set("Content-Type", "application/json")
@@ -316,7 +329,11 @@ func (h *ConvertingResourceHandler) Update(w http.ResponseWriter, r *http.Reques
 
 	// Convert to public typed object
 	objJSON, _ := json.Marshal(objMap)
-	publicObj := h.newObjectFunc()
+	publicObj, err := h.publicScheme.New(h.gvk)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create public object: %v", err))
+		return
+	}
 	if err := json.Unmarshal(objJSON, publicObj); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to unmarshal object: %v", err))
 		return
@@ -430,7 +447,11 @@ func (h *ConvertingResourceHandler) Patch(w http.ResponseWriter, r *http.Request
 
 	// Convert to public typed object
 	objJSON, _ := json.Marshal(objMap)
-	publicObj := h.newObjectFunc()
+	publicObj, err := h.publicScheme.New(h.gvk)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create public object: %v", err))
+		return
+	}
 	if err := json.Unmarshal(objJSON, publicObj); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to unmarshal object: %v", err))
 		return
@@ -563,7 +584,12 @@ func (h *ConvertingResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.
 
 	// Convert back to private object
 	updatedJSON, _ := json.Marshal(existingMap)
-	updatedPrivate := h.privateNewFunc()
+	updatedPrivateRaw, err := h.privateScheme.New(h.gvk)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create private object: %v", err))
+		return
+	}
+	updatedPrivate := updatedPrivateRaw.(client.Object)
 	if err := json.Unmarshal(updatedJSON, updatedPrivate); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to unmarshal object: %v", err))
 		return

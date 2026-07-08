@@ -5,7 +5,6 @@ package v1
 import (
 	privatev1 "github.com/thetechnick/orlop/apis/private/test/v1"
 	"github.com/thetechnick/orlop/pkg/apiserver/types"
-	"k8s.io/apimachinery/pkg/runtime"
 	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 )
 
@@ -31,10 +30,8 @@ func GetResourceInfos() []types.ResourceInfo {
 				Version: "v1",
 				Kind:    "Object",
 			},
-			Plural:        ObjectPlural,
-			SchemaYAML:    ObjectSchemaYAML,
-			NewObjectFunc: func() runtime.Object { return &Object{} },
-			NewListFunc:   func() runtime.Object { return &ObjectList{} },
+			Plural:     ObjectPlural,
+			SchemaYAML: ObjectSchemaYAML,
 		},
 		{
 			GVK: runtimeschema.GroupVersionKind{
@@ -42,10 +39,8 @@ func GetResourceInfos() []types.ResourceInfo {
 				Version: "v1",
 				Kind:    "Other",
 			},
-			Plural:        OtherPlural,
-			SchemaYAML:    OtherSchemaYAML,
-			NewObjectFunc: func() runtime.Object { return &Other{} },
-			NewListFunc:   func() runtime.Object { return &OtherList{} },
+			Plural:     OtherPlural,
+			SchemaYAML: OtherSchemaYAML,
 		},
 	}
 }

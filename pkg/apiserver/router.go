@@ -8,6 +8,7 @@ import (
 	"github.com/thetechnick/orlop/pkg/apiserver/conversion"
 	"github.com/thetechnick/orlop/pkg/apiserver/handlers"
 	"github.com/thetechnick/orlop/pkg/apiserver/middleware"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // setupRouter configures the HTTP router with all endpoints.
@@ -86,7 +87,7 @@ func setupRouter(registry *ResourceRegistry, corsOrigins []string) (chi.Router, 
 }
 
 // setupConvertingRouter configures the HTTP router with converting handlers for public API.
-func setupConvertingRouter(registry *ResourceRegistry, converter *conversion.Converter, corsOrigins []string) (chi.Router, error) {
+func setupConvertingRouter(registry *ResourceRegistry, converter *conversion.Converter, privateScheme *runtime.Scheme, corsOrigins []string) (chi.Router, error) {
 	r := chi.NewRouter()
 
 	// Add CORS middleware
@@ -124,7 +125,7 @@ func setupConvertingRouter(registry *ResourceRegistry, converter *conversion.Con
 			r.Route("/namespaces/{namespace}", func(r chi.Router) {
 				// Register routes for each resource
 				for _, res := range resources {
-					handlerInterface, err := registry.CreateConvertingHandler(converter, res)
+					handlerInterface, err := registry.CreateConvertingHandler(converter, privateScheme, res)
 					if err != nil {
 						// Log error but continue with other resources
 						continue

@@ -21,8 +21,6 @@ type ResourceInfo struct {
 	GVK            runtimeschema.GroupVersionKind
 	Plural         string
 	SchemaYAML     string
-	NewObjectFunc  func() runtime.Object
-	NewListFunc    func() runtime.Object
 	PrivateNewFunc func() runtime.Object
 }
 

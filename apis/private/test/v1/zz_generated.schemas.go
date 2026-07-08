@@ -7,7 +7,6 @@ import (
 	apiext "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
-	"k8s.io/apimachinery/pkg/runtime"
 	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
 )
@@ -157,10 +156,8 @@ func GetResourceInfos() []types.ResourceInfo {
 				Version: "v1",
 				Kind:    "Object",
 			},
-			Plural:        ObjectPlural,
-			SchemaYAML:    ObjectSchemaYAML,
-			NewObjectFunc: func() runtime.Object { return &Object{} },
-			NewListFunc:   func() runtime.Object { return &ObjectList{} },
+			Plural:     ObjectPlural,
+			SchemaYAML: ObjectSchemaYAML,
 		},
 		{
 			GVK: runtimeschema.GroupVersionKind{
@@ -168,10 +165,8 @@ func GetResourceInfos() []types.ResourceInfo {
 				Version: "v1",
 				Kind:    "Other",
 			},
-			Plural:        OtherPlural,
-			SchemaYAML:    OtherSchemaYAML,
-			NewObjectFunc: func() runtime.Object { return &Other{} },
-			NewListFunc:   func() runtime.Object { return &OtherList{} },
+			Plural:     OtherPlural,
+			SchemaYAML: OtherSchemaYAML,
 		},
 	}
 }

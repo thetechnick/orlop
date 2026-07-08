@@ -177,7 +177,6 @@ func (g *Generator) generateSchemaGoFile(outputPath, packageDir string, schemas 
 	source.WriteString("\tapiext \"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions\"\n")
 	source.WriteString("\tapiextv1 \"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1\"\n")
 	source.WriteString("\t\"k8s.io/apiextensions-apiserver/pkg/apiserver/schema\"\n")
-	source.WriteString("\t\"k8s.io/apimachinery/pkg/runtime\"\n")
 	source.WriteString("\truntimeschema \"k8s.io/apimachinery/pkg/runtime/schema\"\n")
 	source.WriteString("\t\"sigs.k8s.io/yaml\"\n")
 	source.WriteString(")\n\n")
@@ -248,10 +247,8 @@ func (g *Generator) generateSchemaGoFile(outputPath, packageDir string, schemas 
 		source.WriteString(fmt.Sprintf("\t\t\t\tVersion: %q,\n", version))
 		source.WriteString(fmt.Sprintf("\t\t\t\tKind:    %q,\n", s.typeName))
 		source.WriteString("\t\t\t},\n")
-		source.WriteString(fmt.Sprintf("\t\t\tPlural:        %sPlural,\n", s.typeName))
-		source.WriteString(fmt.Sprintf("\t\t\tSchemaYAML:    %sSchemaYAML,\n", s.typeName))
-		source.WriteString(fmt.Sprintf("\t\t\tNewObjectFunc: func() runtime.Object { return &%s{} },\n", s.typeName))
-		source.WriteString(fmt.Sprintf("\t\t\tNewListFunc:   func() runtime.Object { return &%sList{} },\n", s.typeName))
+		source.WriteString(fmt.Sprintf("\t\t\tPlural:     %sPlural,\n", s.typeName))
+		source.WriteString(fmt.Sprintf("\t\t\tSchemaYAML: %sSchemaYAML,\n", s.typeName))
 		source.WriteString("\t\t},\n")
 	}
 

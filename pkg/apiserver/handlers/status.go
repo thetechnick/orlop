@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // UpdateStatus handles PUT requests to update only the status subresource.
@@ -59,17 +60,22 @@ func (h *ResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Convert back to typed object
 	updatedJSON, _ := json.Marshal(existingMap)
-	obj := h.newObjectFunc()
+	obj, err := h.scheme.New(h.gvk)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create object: %v", err))
+		return
+	}
 	if err := json.Unmarshal(updatedJSON, obj); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to unmarshal object: %v", err))
 		return
 	}
+	clientObj := obj.(client.Object)
 
 	// Set GVK
-	obj.GetObjectKind().SetGroupVersionKind(h.gvk)
+	clientObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Update in storage
-	if err := h.store.Update(obj); err != nil {
+	if err := h.store.Update(clientObj); err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {
@@ -83,7 +89,7 @@ func (h *ResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	// Return updated object
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(obj)
+	json.NewEncoder(w).Encode(clientObj)
 }
 
 // getResourceVersionFromMap extracts resource version from metadata map.

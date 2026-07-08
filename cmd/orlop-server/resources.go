@@ -18,8 +18,6 @@ func getPrivateResources() []apiserver.ResourceInfo {
 			GVK:            info.GVK,
 			Plural:         info.Plural,
 			SchemaYAML:     info.SchemaYAML,
-			NewObjectFunc:  info.NewObjectFunc,
-			NewListFunc:    info.NewListFunc,
 			PrivateNewFunc: nil, // Not used for private API
 		}
 	}
@@ -29,29 +27,9 @@ func getPrivateResources() []apiserver.ResourceInfo {
 // getPublicResources returns the resource definitions for the public API.
 // Uses generated ResourceInfo from both public and private API packages.
 func getPublicResources() []apiserver.ResourceInfo {
-	// Get public API resource infos
-	publicInfos := publicv1.GetResourceInfos()
-	// Get private API resource infos for PrivateNewFunc
-	privateInfos := privatev1.GetResourceInfos()
-
-	// Create map of private constructors by Kind
-	privateCtors := make(map[string]func() runtime.Object)
-	for _, info := range privateInfos {
-		privateCtors[info.GVK.Kind] = info.NewObjectFunc
-	}
-
-	result := make([]apiserver.ResourceInfo, len(publicInfos))
-	for i, info := range publicInfos {
-		result[i] = apiserver.ResourceInfo{
-			GVK:            info.GVK,
-			Plural:         info.Plural,
-			SchemaYAML:     info.SchemaYAML,
-			NewObjectFunc:  info.NewObjectFunc,
-			NewListFunc:    info.NewListFunc,
-			PrivateNewFunc: privateCtors[info.GVK.Kind], // Link to private constructor
-		}
-	}
-	return result
+	// Get public API resource infos - just use them directly
+	// PrivateNewFunc is no longer needed since we use schemes
+	return publicv1.GetResourceInfos()
 }
 
 // getPrivateScheme creates and returns a runtime.Scheme with private API types registered.

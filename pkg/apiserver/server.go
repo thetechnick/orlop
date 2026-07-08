@@ -82,7 +82,7 @@ func New(opts Options) (*Server, error) {
 		}
 
 		converter := conversion.NewConverter()
-		publicRouter, err := setupConvertingRouter(publicRegistry, converter, opts.CORSOrigins)
+		publicRouter, err := setupConvertingRouter(publicRegistry, converter, opts.PrivateScheme, opts.CORSOrigins)
 		if err != nil {
 			return nil, fmt.Errorf("failed to setup public router: %w", err)
 		}

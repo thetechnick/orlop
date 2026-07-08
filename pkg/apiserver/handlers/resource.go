@@ -23,12 +23,11 @@ import (
 
 // ResourceHandler handles CRUD operations for a specific resource type.
 type ResourceHandler struct {
-	store         storage.ResourceStore
-	processor     *schema.Processor
-	gvk           runtimeschema.GroupVersionKind
-	resourceType  string
-	newObjectFunc func() client.Object
-	newListFunc   func() client.ObjectList
+	store        storage.ResourceStore
+	processor    *schema.Processor
+	gvk          runtimeschema.GroupVersionKind
+	resourceType string
+	scheme       *runtime.Scheme
 }
 
 // NewResourceHandler creates a new resource handler.
@@ -37,16 +36,14 @@ func NewResourceHandler(
 	processor *schema.Processor,
 	gvk runtimeschema.GroupVersionKind,
 	resourceType string,
-	newObjectFunc func() runtime.Object,
-	newListFunc func() runtime.Object,
+	scheme *runtime.Scheme,
 ) *ResourceHandler {
 	return &ResourceHandler{
-		store:         store,
-		processor:     processor,
-		gvk:           gvk,
-		resourceType:  resourceType,
-		newObjectFunc: func() client.Object { return newObjectFunc().(client.Object) },
-		newListFunc:   func() client.ObjectList { return newListFunc().(client.ObjectList) },
+		store:        store,
+		processor:    processor,
+		gvk:          gvk,
+		resourceType: resourceType,
+		scheme:       scheme,
 	}
 }
 
@@ -69,14 +66,19 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Convert back to typed object
 	objJSON, _ := json.Marshal(objMap)
-	obj := h.newObjectFunc()
+	obj, err := h.scheme.New(h.gvk)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create object: %v", err))
+		return
+	}
 	if err := json.Unmarshal(objJSON, obj); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to unmarshal object: %v", err))
 		return
 	}
+	clientObj := obj.(client.Object)
 
 	// Set metadata
-	accessor, err := meta.Accessor(obj)
+	accessor, err := meta.Accessor(clientObj)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to access metadata: %v", err))
 		return
@@ -94,10 +96,10 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	accessor.SetGeneration(1)
 
 	// Set GVK
-	obj.GetObjectKind().SetGroupVersionKind(h.gvk)
+	clientObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Store object
-	if err := h.store.Create(obj); err != nil {
+	if err := h.store.Create(clientObj); err != nil {
 		if errors.IsAlreadyExists(err) {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
@@ -109,7 +111,7 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Return created object
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(obj)
+	json.NewEncoder(w).Encode(clientObj)
 }
 
 // Get handles GET requests to retrieve a single resource.
@@ -255,14 +257,19 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Convert back to typed object
 	objJSON, _ := json.Marshal(objMap)
-	obj := h.newObjectFunc()
+	obj, err := h.scheme.New(h.gvk)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create object: %v", err))
+		return
+	}
 	if err := json.Unmarshal(objJSON, obj); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to unmarshal object: %v", err))
 		return
 	}
+	clientObj := obj.(client.Object)
 
 	// Set metadata
-	accessor, err := meta.Accessor(obj)
+	accessor, err := meta.Accessor(clientObj)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to access metadata: %v", err))
 		return
@@ -273,17 +280,17 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Check if spec changed and increment generation if so
 	existingAccessor, _ := meta.Accessor(existing)
-	if specChanged(existing, obj) {
+	if specChanged(existing, clientObj) {
 		accessor.SetGeneration(existingAccessor.GetGeneration() + 1)
 	} else {
 		accessor.SetGeneration(existingAccessor.GetGeneration())
 	}
 
 	// Set GVK
-	obj.GetObjectKind().SetGroupVersionKind(h.gvk)
+	clientObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Update object
-	if err := h.store.Update(obj); err != nil {
+	if err := h.store.Update(clientObj); err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {
@@ -297,7 +304,7 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Return updated object
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(obj)
+	json.NewEncoder(w).Encode(clientObj)
 }
 
 // Patch handles PATCH requests to partially update a resource.
@@ -378,14 +385,19 @@ func (h *ResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
 
 	// Convert back to typed object
 	objJSON, _ := json.Marshal(objMap)
-	obj := h.newObjectFunc()
+	obj, err := h.scheme.New(h.gvk)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create object: %v", err))
+		return
+	}
 	if err := json.Unmarshal(objJSON, obj); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to unmarshal object: %v", err))
 		return
 	}
+	clientObj := obj.(client.Object)
 
 	// Set metadata
-	accessor, err := meta.Accessor(obj)
+	accessor, err := meta.Accessor(clientObj)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to access metadata: %v", err))
 		return
@@ -396,17 +408,17 @@ func (h *ResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
 
 	// Check if spec changed and increment generation if so
 	existingAccessor, _ := meta.Accessor(existing)
-	if specChanged(existing, obj) {
+	if specChanged(existing, clientObj) {
 		accessor.SetGeneration(existingAccessor.GetGeneration() + 1)
 	} else {
 		accessor.SetGeneration(existingAccessor.GetGeneration())
 	}
 
 	// Set GVK
-	obj.GetObjectKind().SetGroupVersionKind(h.gvk)
+	clientObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Update object in storage
-	if err := h.store.Update(obj); err != nil {
+	if err := h.store.Update(clientObj); err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {
@@ -420,7 +432,7 @@ func (h *ResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
 	// Return patched object
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(obj)
+	json.NewEncoder(w).Encode(clientObj)
 }
 
 // Delete handles DELETE requests to delete a resource.

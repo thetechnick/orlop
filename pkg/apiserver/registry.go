@@ -60,8 +60,6 @@ func (r *ResourceRegistry) Resources() []handlers.ResourceInfo {
 			GVK:            res.GVK,
 			Plural:         res.Plural,
 			SchemaYAML:     res.SchemaYAML,
-			NewObjectFunc:  res.NewObjectFunc,
-			NewListFunc:    res.NewListFunc,
 			PrivateNewFunc: res.PrivateNewFunc,
 		}
 	}
@@ -93,15 +91,14 @@ func (r *ResourceRegistry) CreateHandler(info ResourceInfo) (*handlers.ResourceH
 		processor,
 		info.GVK,
 		info.Plural,
-		info.NewObjectFunc,
-		info.NewListFunc,
+		r.scheme,
 	)
 
 	return handler, nil
 }
 
 // CreateConvertingHandler creates a ConvertingResourceHandler for the given resource info.
-func (r *ResourceRegistry) CreateConvertingHandler(converter interface{}, info ResourceInfo) (interface{}, error) {
+func (r *ResourceRegistry) CreateConvertingHandler(converter interface{}, privateScheme *runtime.Scheme, info ResourceInfo) (interface{}, error) {
 	// Get store for this resource
 	store := r.GetStore(info.Plural)
 	if store == nil {
@@ -121,9 +118,8 @@ func (r *ResourceRegistry) CreateConvertingHandler(converter interface{}, info R
 		converter.(*conversion.Converter),
 		info.GVK,
 		info.Plural,
-		info.NewObjectFunc,
-		info.NewListFunc,
-		info.PrivateNewFunc,
+		r.scheme,      // Public scheme from registry
+		privateScheme, // Private scheme passed in
 	)
 
 	return handler, nil

@@ -13,10 +13,7 @@ type ResourceInfo struct {
 	Plural string
 	// SchemaYAML is the OpenAPI v3 schema in YAML format
 	SchemaYAML string
-	// NewObjectFunc creates a new instance of the resource
-	NewObjectFunc func() runtime.Object
-	// NewListFunc creates a new list instance
-	NewListFunc func() runtime.Object
 	// PrivateNewFunc creates a new instance of the private resource (for converting handlers)
+	// This is only used for public API resources that need conversion
 	PrivateNewFunc func() runtime.Object
 }

@@ -38,10 +38,8 @@ func TestMain(m *testing.M) {
 				Version: "v1",
 				Kind:    "Object",
 			},
-			Plural:        privatev1.ObjectPlural,
-			SchemaYAML:    privatev1.ObjectSchemaYAML,
-			NewObjectFunc: func() runtime.Object { return &privatev1.Object{} },
-			NewListFunc:   func() runtime.Object { return &privatev1.ObjectList{} },
+			Plural:     privatev1.ObjectPlural,
+			SchemaYAML: privatev1.ObjectSchemaYAML,
 		},
 		{
 			GVK: runtimeschema.GroupVersionKind{
@@ -49,10 +47,8 @@ func TestMain(m *testing.M) {
 				Version: "v1",
 				Kind:    "Other",
 			},
-			Plural:        privatev1.OtherPlural,
-			SchemaYAML:    privatev1.OtherSchemaYAML,
-			NewObjectFunc: func() runtime.Object { return &privatev1.Other{} },
-			NewListFunc:   func() runtime.Object { return &privatev1.OtherList{} },
+			Plural:     privatev1.OtherPlural,
+			SchemaYAML: privatev1.OtherSchemaYAML,
 		},
 	}
 
