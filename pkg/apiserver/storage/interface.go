@@ -34,4 +34,8 @@ type ResourceStore interface {
 	// CurrentResourceVersion returns the current resource version of the store.
 	// This is used for list metadata to indicate the version at which the list was served.
 	CurrentResourceVersion() string
+
+	// Watch starts watching for changes starting from the given resource version.
+	// Returns a channel that receives watch events and a stop function to end the watch.
+	Watch(namespace string, opts ListOptions, resourceVersion string) (<-chan WatchEvent, func(), error)
 }

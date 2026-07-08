@@ -946,6 +946,128 @@ func TestCreateReturnsResourceVersion(t *testing.T) {
 	doRequest(t, "DELETE", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/%s", namespace, name), nil)
 }
 
+func TestWatch(t *testing.T) {
+	namespace := "default"
+
+	// Start a watch request in the background
+	watchURL := fmt.Sprintf("%s/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects?watch=true", baseURL, namespace)
+
+	watchReq, err := http.NewRequest("GET", watchURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to create watch request: %v", err)
+	}
+
+	client := &http.Client{}
+	watchResp, err := client.Do(watchReq)
+	if err != nil {
+		t.Fatalf("Failed to start watch: %v", err)
+	}
+	defer watchResp.Body.Close()
+
+	if watchResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(watchResp.Body)
+		t.Fatalf("Expected status 200 for watch, got %d: %s", watchResp.StatusCode, body)
+	}
+
+	// Channel to collect watch events
+	events := make(chan map[string]interface{}, 10)
+	watchDone := make(chan struct{})
+
+	// Start reading watch events
+	go func() {
+		defer close(watchDone)
+		decoder := json.NewDecoder(watchResp.Body)
+		for {
+			var event map[string]interface{}
+			if err := decoder.Decode(&event); err != nil {
+				return
+			}
+			events <- event
+		}
+	}()
+
+	// Give watch time to establish
+	time.Sleep(100 * time.Millisecond)
+
+	// Create an object
+	createPayload := map[string]interface{}{
+		"apiVersion": "test.orlop.thetechnick.ninja/v1",
+		"kind":       "Object",
+		"metadata": map[string]interface{}{
+			"name":      "watch-test",
+			"namespace": namespace,
+		},
+		"spec": map[string]interface{}{
+			"publicField":   "test",
+			"internalField": "internal",
+			"nested": map[string]interface{}{
+				"publicField":   "nested",
+				"internalField": "nested-internal",
+			},
+		},
+	}
+
+	doRequest(t, "POST", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", namespace), createPayload)
+
+	// Wait for ADDED event
+	select {
+	case event := <-events:
+		if event["type"] != "ADDED" {
+			t.Errorf("Expected ADDED event, got %s", event["type"])
+		}
+		obj := event["object"].(map[string]interface{})
+		metadata := obj["metadata"].(map[string]interface{})
+		if metadata["name"] != "watch-test" {
+			t.Errorf("Expected name watch-test, got %s", metadata["name"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for ADDED event")
+	}
+
+	// Update the object
+	updatePayload := map[string]interface{}{
+		"apiVersion": "test.orlop.thetechnick.ninja/v1",
+		"kind":       "Object",
+		"metadata": map[string]interface{}{
+			"name":      "watch-test",
+			"namespace": namespace,
+		},
+		"spec": map[string]interface{}{
+			"publicField":   "updated",
+			"internalField": "internal",
+			"nested": map[string]interface{}{
+				"publicField":   "nested",
+				"internalField": "nested-internal",
+			},
+		},
+	}
+
+	doRequest(t, "PUT", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/watch-test", namespace), updatePayload)
+
+	// Wait for MODIFIED event
+	select {
+	case event := <-events:
+		if event["type"] != "MODIFIED" {
+			t.Errorf("Expected MODIFIED event, got %s", event["type"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for MODIFIED event")
+	}
+
+	// Delete the object
+	doRequest(t, "DELETE", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/watch-test", namespace), nil)
+
+	// Wait for DELETED event
+	select {
+	case event := <-events:
+		if event["type"] != "DELETED" {
+			t.Errorf("Expected DELETED event, got %s", event["type"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for DELETED event")
+	}
+}
+
 func TestOtherResource(t *testing.T) {
 	namespace := "default"
 	name := "test-other"

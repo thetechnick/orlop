@@ -145,6 +145,12 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 		opts.LabelSelector = selector
 	}
 
+	// Check if this is a watch request
+	if r.URL.Query().Get("watch") == "true" {
+		h.handleWatch(w, r, namespace, opts)
+		return
+	}
+
 	objects, err := h.store.List(namespace, opts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list objects: %v", err))
@@ -165,6 +171,55 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(listMap)
+}
+
+// handleWatch handles watch requests using Server-Sent Events.
+func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, namespace string, opts storage.ListOptions) {
+	// Get resourceVersion to start from
+	resourceVersion := r.URL.Query().Get("resourceVersion")
+
+	// Start watch
+	eventCh, stop, err := h.store.Watch(namespace, opts, resourceVersion)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to start watch: %v", err))
+		return
+	}
+	defer stop()
+
+	// Set headers for streaming
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Transfer-Encoding", "chunked")
+	w.WriteHeader(http.StatusOK)
+
+	// Get flusher for streaming
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return
+	}
+
+	// Stream events
+	encoder := json.NewEncoder(w)
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case event, ok := <-eventCh:
+			if !ok {
+				return
+			}
+
+			// Send watch event
+			watchEvent := map[string]interface{}{
+				"type":   event.Type,
+				"object": event.Object,
+			}
+
+			if err := encoder.Encode(watchEvent); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
 }
 
 // Update handles PUT requests to update a resource.

@@ -15,11 +15,15 @@ import (
 // MemoryBackend provides shared state for all MemoryStore instances.
 type MemoryBackend struct {
 	resourceVersionCounter atomic.Int64
+	mu                     sync.RWMutex
+	watchers               map[string]*Watcher // resourceType -> Watcher
 }
 
 // NewMemoryBackend creates a new memory backend with shared resource version counter.
 func NewMemoryBackend() *MemoryBackend {
-	return &MemoryBackend{}
+	return &MemoryBackend{
+		watchers: make(map[string]*Watcher),
+	}
 }
 
 // NewStore creates a new MemoryStore for a specific resource type that shares
@@ -35,6 +39,29 @@ func (b *MemoryBackend) NewStore(resourceType string) *MemoryStore {
 // CurrentResourceVersion returns the current resource version.
 func (b *MemoryBackend) CurrentResourceVersion() string {
 	return fmt.Sprintf("%d", b.resourceVersionCounter.Load())
+}
+
+// GetWatcher returns the watcher for a resource type, creating one if needed.
+func (b *MemoryBackend) GetWatcher(resourceType string) *Watcher {
+	b.mu.RLock()
+	watcher, exists := b.watchers[resourceType]
+	b.mu.RUnlock()
+
+	if exists {
+		return watcher
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	// Double-check after acquiring write lock
+	if watcher, exists := b.watchers[resourceType]; exists {
+		return watcher
+	}
+
+	watcher = NewWatcher(50) // Buffer 50 events
+	b.watchers[resourceType] = watcher
+	return watcher
 }
 
 // MemoryStore implements ResourceStore using an in-memory map.
@@ -65,6 +92,15 @@ func (s *MemoryStore) Create(namespace, name string, obj runtime.Object) error {
 	}
 
 	s.objects[key] = obj.DeepCopyObject()
+
+	// Broadcast watch event
+	watcher := s.backend.GetWatcher(s.resourceType)
+	watcher.Broadcast(WatchEvent{
+		Type:            "ADDED",
+		Object:          obj.DeepCopyObject(),
+		ResourceVersion: fmt.Sprintf("%d", newVersion),
+	})
+
 	return nil
 }
 
@@ -151,6 +187,15 @@ func (s *MemoryStore) Update(namespace, name string, obj runtime.Object) error {
 	}
 
 	s.objects[key] = obj.DeepCopyObject()
+
+	// Broadcast watch event
+	watcher := s.backend.GetWatcher(s.resourceType)
+	watcher.Broadcast(WatchEvent{
+		Type:            "MODIFIED",
+		Object:          obj.DeepCopyObject(),
+		ResourceVersion: fmt.Sprintf("%d", newVersion),
+	})
+
 	return nil
 }
 
@@ -161,11 +206,21 @@ func (s *MemoryStore) Delete(namespace, name string) error {
 
 	key := s.makeKey(namespace, name)
 
-	if _, exists := s.objects[key]; !exists {
+	obj, exists := s.objects[key]
+	if !exists {
 		return errors.NewNotFound(schema.GroupResource{Resource: s.resourceType}, name)
 	}
 
 	delete(s.objects, key)
+
+	// Broadcast watch event (use current RV since delete doesn't change it)
+	watcher := s.backend.GetWatcher(s.resourceType)
+	watcher.Broadcast(WatchEvent{
+		Type:            "DELETED",
+		Object:          obj.DeepCopyObject(),
+		ResourceVersion: s.backend.CurrentResourceVersion(),
+	})
+
 	return nil
 }
 
@@ -205,4 +260,71 @@ func (s *MemoryStore) setResourceVersion(obj runtime.Object, version int64) erro
 // CurrentResourceVersion returns the current resource version of the backend.
 func (s *MemoryStore) CurrentResourceVersion() string {
 	return s.backend.CurrentResourceVersion()
+}
+
+// Watch starts watching for changes starting from the given resource version.
+func (s *MemoryStore) Watch(namespace string, opts ListOptions, resourceVersion string) (<-chan WatchEvent, func(), error) {
+	watcher := s.backend.GetWatcher(s.resourceType)
+
+	// Subscribe to watch events
+	eventCh, id, err := watcher.Subscribe(resourceVersion)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Create filtered output channel
+	outCh := make(chan WatchEvent, 100)
+	stopCh := make(chan struct{})
+
+	// Start filtering goroutine
+	go func() {
+		defer close(outCh)
+		defer watcher.Unsubscribe(id)
+
+		for {
+			select {
+			case <-stopCh:
+				return
+			case event, ok := <-eventCh:
+				if !ok {
+					return
+				}
+
+				// Filter by namespace
+				if namespace != "" {
+					accessor, err := meta.Accessor(event.Object)
+					if err != nil {
+						continue
+					}
+					if accessor.GetNamespace() != namespace {
+						continue
+					}
+				}
+
+				// Filter by label selector
+				if opts.LabelSelector != nil && !opts.LabelSelector.Empty() {
+					accessor, err := meta.Accessor(event.Object)
+					if err != nil {
+						continue
+					}
+					if !opts.LabelSelector.Matches(labels.Set(accessor.GetLabels())) {
+						continue
+					}
+				}
+
+				// Send filtered event
+				select {
+				case outCh <- event:
+				case <-stopCh:
+					return
+				}
+			}
+		}
+	}()
+
+	stopFunc := func() {
+		close(stopCh)
+	}
+
+	return outCh, stopFunc, nil
 }
