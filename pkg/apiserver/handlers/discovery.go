@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/munnerz/goautoneg"
+	"github.com/thetechnick/orlop/pkg/apiserver/types"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 	openapihandler "k8s.io/kube-openapi/pkg/handler"
@@ -15,21 +16,14 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// ResourceInfo describes a single API resource type (duplicated to avoid import cycle).
-type ResourceInfo struct {
-	GVK        runtimeschema.GroupVersionKind
-	Plural     string
-	SchemaYAML string
-}
-
 // ResourceProvider provides access to registered resources.
 type ResourceProvider interface {
-	Resources() []ResourceInfo
+	Resources() []types.ResourceInfo
 }
 
 // DiscoveryHandler handles API discovery requests.
 type DiscoveryHandler struct {
-	resources     []ResourceInfo
+	resources     []types.ResourceInfo
 	openAPIV2Spec *openapispec.Swagger
 	openAPIV2Once sync.Once
 	v2JSONCache   []byte
@@ -431,7 +425,7 @@ func (h *DiscoveryHandler) buildOpenAPIV2Spec() *openapispec.Swagger {
 	paths := spec["paths"].(map[string]interface{})
 
 	// Group resources by group/version
-	groupedResources := make(map[string][]ResourceInfo)
+	groupedResources := make(map[string][]types.ResourceInfo)
 	for _, res := range h.resources {
 		key := res.GVK.Group + "/" + res.GVK.Version
 		groupedResources[key] = append(groupedResources[key], res)

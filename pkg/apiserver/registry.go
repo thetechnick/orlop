@@ -52,17 +52,8 @@ func (r *ResourceRegistry) GetStores() map[string]storage.ResourceStore {
 }
 
 // Resources returns all registered resources.
-func (r *ResourceRegistry) Resources() []handlers.ResourceInfo {
-	// Convert to handlers.ResourceInfo to avoid import cycles
-	result := make([]handlers.ResourceInfo, len(r.resources))
-	for i, res := range r.resources {
-		result[i] = handlers.ResourceInfo{
-			GVK:        res.GVK,
-			Plural:     res.Plural,
-			SchemaYAML: res.SchemaYAML,
-		}
-	}
-	return result
+func (r *ResourceRegistry) Resources() []types.ResourceInfo {
+	return r.resources
 }
 
 // GetResources returns the internal resource list.
