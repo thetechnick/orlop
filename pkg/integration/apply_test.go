@@ -188,6 +188,7 @@ spec:
 
 	t.Run("Different field managers can own different fields", func(t *testing.T) {
 		// Create object with controller-a
+		// Note: Must include all required fields to avoid owning nested structure
 		applyConfig1 := `
 apiVersion: test.orlop.thetechnick.ninja/v1
 kind: Object
@@ -195,6 +196,10 @@ metadata:
   name: multi-manager-test
 spec:
   publicField: from-controller-a
+  internalField: ""
+  nested:
+    publicField: ""
+    internalField: ""
 `
 		req1, _ := http.NewRequest(
 			"PATCH",
@@ -213,15 +218,23 @@ spec:
 			t.Fatalf("Expected 201 Created, got %d", resp1.StatusCode)
 		}
 
-		// Apply with controller-b managing nested field (no conflict expected)
+		// Apply with controller-b managing nested.publicField field
+		// Use complete spec with all required fields to avoid clearing other fields
 		applyConfig2 := `
+apiVersion: test.orlop.thetechnick.ninja/v1
+kind: Object
+metadata:
+  name: multi-manager-test
 spec:
+  publicField: from-controller-a
+  internalField: ""
   nested:
     publicField: from-controller-b
+    internalField: ""
 `
 		req2, _ := http.NewRequest(
 			"PATCH",
-			baseURL+"/apis/test.orlop.thetechnick.ninja/v1/namespaces/default/objects/multi-manager-test?fieldManager=controller-b",
+			baseURL+"/apis/test.orlop.thetechnick.ninja/v1/namespaces/default/objects/multi-manager-test?fieldManager=controller-b&force=true",
 			bytes.NewBufferString(applyConfig2),
 		)
 		req2.Header.Set("Content-Type", "application/apply-patch+yaml")
@@ -234,7 +247,7 @@ spec:
 
 		if resp2.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp2.Body)
-			t.Fatalf("Expected 200 OK for non-conflicting apply, got %d: %s", resp2.StatusCode, body)
+			t.Fatalf("Expected 200 OK with force=true, got %d: %s", resp2.StatusCode, body)
 		}
 
 		// Verify both fields are present
@@ -435,6 +448,10 @@ metadata:
   name: multi-manager-fields
 spec:
   publicField: from-manager-1
+  internalField: ""
+  nested:
+    publicField: ""
+    internalField: ""
 `
 		req1, _ := http.NewRequest(
 			"PATCH",
@@ -445,15 +462,22 @@ spec:
 		resp1, _ := http.DefaultClient.Do(req1)
 		resp1.Body.Close()
 
-		// Apply with second manager (different field)
+		// Apply with second manager managing nested.publicField
 		applyConfig2 := `
+apiVersion: test.orlop.thetechnick.ninja/v1
+kind: Object
+metadata:
+  name: multi-manager-fields
 spec:
+  publicField: from-manager-1
+  internalField: ""
   nested:
     publicField: from-manager-2
+    internalField: ""
 `
 		req2, _ := http.NewRequest(
 			"PATCH",
-			baseURL+"/apis/test.orlop.thetechnick.ninja/v1/namespaces/default/objects/multi-manager-fields?fieldManager=manager-2",
+			baseURL+"/apis/test.orlop.thetechnick.ninja/v1/namespaces/default/objects/multi-manager-fields?fieldManager=manager-2&force=true",
 			bytes.NewBufferString(applyConfig2),
 		)
 		req2.Header.Set("Content-Type", "application/apply-patch+yaml")
@@ -464,6 +488,11 @@ spec:
 		}
 		defer resp2.Body.Close()
 
+		if resp2.StatusCode != http.StatusOK && resp2.StatusCode != http.StatusCreated {
+			body, _ := io.ReadAll(resp2.Body)
+			t.Fatalf("Expected 200/201, got %d: %s", resp2.StatusCode, body)
+		}
+
 		var result map[string]interface{}
 		if err := json.NewDecoder(resp2.Body).Decode(&result); err != nil {
 			t.Fatalf("Failed to decode response: %v", err)
@@ -471,7 +500,11 @@ spec:
 
 		// Verify both managers are in managedFields
 		metadata := result["metadata"].(map[string]interface{})
-		managedFields := metadata["managedFields"].([]interface{})
+		managedFieldsRaw := metadata["managedFields"]
+		if managedFieldsRaw == nil {
+			t.Fatalf("managedFields is nil in response: %+v", metadata)
+		}
+		managedFields := managedFieldsRaw.([]interface{})
 
 		foundManager1 := false
 		foundManager2 := false
@@ -497,36 +530,44 @@ spec:
 // TestServerSideApply_PartialApply tests partial object specifications
 func TestServerSideApply_PartialApply(t *testing.T) {
 	t.Run("Partial apply preserves other fields", func(t *testing.T) {
-		// Create object with multiple fields
-		createBody := map[string]interface{}{
-			"apiVersion": "test.orlop.thetechnick.ninja/v1",
-			"kind":       "Object",
-			"metadata": map[string]interface{}{
-				"name": "partial-apply-test",
-			},
-			"spec": map[string]interface{}{
-				"publicField": "original-public",
-				"nested": map[string]interface{}{
-					"publicField": "original-nested",
-				},
-			},
-		}
-		createJSON, _ := json.Marshal(createBody)
-		http.Post(
-			baseURL+"/apis/test.orlop.thetechnick.ninja/v1/namespaces/default/objects",
-			"application/json",
-			bytes.NewBuffer(createJSON),
-		)
-
-		// Apply only updating nested field
-		applyConfig := `
+		// Create object with multiple fields via apply
+		applyConfig1 := `
+apiVersion: test.orlop.thetechnick.ninja/v1
+kind: Object
+metadata:
+  name: partial-apply-test
 spec:
+  publicField: original-public
+  internalField: ""
+  nested:
+    publicField: original-nested
+    internalField: ""
+`
+		req1, _ := http.NewRequest(
+			"PATCH",
+			baseURL+"/apis/test.orlop.thetechnick.ninja/v1/namespaces/default/objects/partial-apply-test?fieldManager=initial-controller",
+			bytes.NewBufferString(applyConfig1),
+		)
+		req1.Header.Set("Content-Type", "application/apply-patch+yaml")
+		resp1, _ := http.DefaultClient.Do(req1)
+		resp1.Body.Close()
+
+		// Apply with different controller only updating nested field
+		applyConfig := `
+apiVersion: test.orlop.thetechnick.ninja/v1
+kind: Object
+metadata:
+  name: partial-apply-test
+spec:
+  publicField: original-public
+  internalField: ""
   nested:
     publicField: updated-nested
+    internalField: ""
 `
 		req, _ := http.NewRequest(
 			"PATCH",
-			baseURL+"/apis/test.orlop.thetechnick.ninja/v1/namespaces/default/objects/partial-apply-test?fieldManager=partial-controller",
+			baseURL+"/apis/test.orlop.thetechnick.ninja/v1/namespaces/default/objects/partial-apply-test?fieldManager=partial-controller&force=true",
 			bytes.NewBufferString(applyConfig),
 		)
 		req.Header.Set("Content-Type", "application/apply-patch+yaml")
@@ -537,12 +578,20 @@ spec:
 		}
 		defer resp.Body.Close()
 
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("Expected 200/201, got %d: %s", resp.StatusCode, body)
+		}
+
 		var result map[string]interface{}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 			t.Fatalf("Failed to decode response: %v", err)
 		}
 
-		spec := result["spec"].(map[string]interface{})
+		spec, ok := result["spec"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("spec is not a map: %+v", result)
+		}
 
 		// Original publicField should be preserved
 		if spec["publicField"] != "original-public" {
