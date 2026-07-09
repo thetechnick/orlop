@@ -62,3 +62,37 @@ func (p *Processor) Process(obj interface{}) field.ErrorList {
 
 	return errs
 }
+
+// GetValidationSchema returns the validation schema (JSONSchemaProps).
+func (p *Processor) GetValidationSchema() *apiext.JSONSchemaProps {
+	// Convert structural schema back to JSONSchemaProps
+	// This is needed for apply manager
+	return structuralToJSONSchemaProps(p.structural)
+}
+
+// structuralToJSONSchemaProps converts a structural schema to JSONSchemaProps
+func structuralToJSONSchemaProps(s *schema.Structural) *apiext.JSONSchemaProps {
+	if s == nil {
+		return &apiext.JSONSchemaProps{}
+	}
+
+	props := &apiext.JSONSchemaProps{
+		Type:        s.Type,
+		Description: s.Description,
+	}
+
+	if s.Properties != nil {
+		props.Properties = make(map[string]apiext.JSONSchemaProps)
+		for name, prop := range s.Properties {
+			props.Properties[name] = *structuralToJSONSchemaProps(&prop)
+		}
+	}
+
+	if s.Items != nil {
+		props.Items = &apiext.JSONSchemaPropsOrArray{
+			Schema: structuralToJSONSchemaProps(s.Items),
+		}
+	}
+
+	return props
+}

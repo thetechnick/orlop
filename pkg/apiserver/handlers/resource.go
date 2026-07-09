@@ -8,10 +8,12 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/thetechnick/orlop/pkg/apiserver/apply"
 	"github.com/thetechnick/orlop/pkg/apiserver/schema"
 	"github.com/thetechnick/orlop/pkg/apiserver/storage"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -31,6 +33,7 @@ type ResourceHandler struct {
 	gvk          runtimeschema.GroupVersionKind
 	resourceType string
 	scheme       *runtime.Scheme
+	applyManager *apply.Manager // Optional: for server-side apply support
 }
 
 // NewResourceHandler creates a new resource handler.
@@ -47,7 +50,13 @@ func NewResourceHandler(
 		gvk:          gvk,
 		resourceType: resourceType,
 		scheme:       scheme,
+		applyManager: nil, // Will be set by SetApplyManager if SSA is enabled
 	}
+}
+
+// SetApplyManager sets the apply manager for server-side apply support.
+func (h *ResourceHandler) SetApplyManager(applyMgr *apply.Manager) {
+	h.applyManager = applyMgr
 }
 
 // Create handles POST requests to create a new resource.
@@ -531,6 +540,12 @@ func (h *ResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
 	contentType := r.Header.Get("Content-Type")
 	log.Printf("[PATCH] %s namespace=%s name=%s content-type=%s", h.gvk.Kind, namespace, name, contentType)
 
+	// Check if this is a server-side apply request
+	if strings.HasPrefix(contentType, "application/apply-patch+") {
+		h.ApplyPatch(w, r)
+		return
+	}
+
 	// Get existing object
 	existing, err := h.store.Get(namespace, name)
 	if err != nil {
@@ -777,4 +792,93 @@ func mergeMaps(original, patch map[string]interface{}) map[string]interface{} {
 	}
 
 	return result
+}
+
+// ApplyPatch handles server-side apply PATCH requests.
+// This implements the Kubernetes server-side apply protocol with field ownership tracking.
+func (h *ResourceHandler) ApplyPatch(w http.ResponseWriter, r *http.Request) {
+	namespace := chi.URLParam(r, "namespace")
+	name := chi.URLParam(r, "name")
+
+	log.Printf("[APPLY] %s namespace=%s name=%s", h.gvk.Kind, namespace, name)
+
+	// Check if apply manager is available
+	if h.applyManager == nil {
+		writeError(w, http.StatusNotImplemented, "Server-side apply is not enabled for this resource")
+		return
+	}
+
+	// Extract field manager from query parameters (required)
+	fieldManager := r.URL.Query().Get("fieldManager")
+	if fieldManager == "" {
+		writeError(w, http.StatusBadRequest, "fieldManager query parameter is required for server-side apply")
+		return
+	}
+
+	// Extract force parameter (optional, defaults to false)
+	force := r.URL.Query().Get("force") == "true"
+
+	// Read apply configuration body
+	applyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to read request body: %v", err))
+		return
+	}
+
+	// Get existing object (if it exists)
+	existing, err := h.store.Get(namespace, name)
+	if err != nil && !errors.IsNotFound(err) {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get object: %v", err))
+		return
+	}
+
+	// Perform server-side apply
+	result, err := h.applyManager.Apply(existing, applyBytes, fieldManager, force)
+	if err != nil {
+		if errors.IsConflict(err) {
+			writeError(w, http.StatusConflict, fmt.Sprintf("Apply conflict: %v", err))
+		} else {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("Apply failed: %v", err))
+		}
+		return
+	}
+
+	// Ensure namespace is set
+	accessor, err := meta.Accessor(result)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to access metadata: %v", err))
+		return
+	}
+	accessor.SetNamespace(namespace)
+
+	// Save to storage (create or update)
+	if existing == nil {
+		// This is a create via apply
+		accessor.SetUID(types.UID(uuid.New().String()))
+		accessor.SetCreationTimestamp(metav1.Time{Time: time.Now()})
+		accessor.SetGeneration(1)
+
+		if err := h.store.Create(result); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create object: %v", err))
+			return
+		}
+
+		// Return created object
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(result)
+		log.Printf("[APPLY-CREATE] %s/%s created via apply by %s", namespace, name, fieldManager)
+	} else {
+		// This is an update via apply
+		if err := h.store.Update(result); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update object: %v", err))
+			return
+		}
+
+		// Return updated object
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(result)
+		log.Printf("[APPLY-UPDATE] %s/%s updated via apply by %s (force=%v)", namespace, name, fieldManager, force)
+	}
 }

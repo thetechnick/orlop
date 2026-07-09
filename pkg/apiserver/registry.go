@@ -2,7 +2,9 @@ package apiserver
 
 import (
 	"fmt"
+	"log"
 
+	"github.com/thetechnick/orlop/pkg/apiserver/apply"
 	"github.com/thetechnick/orlop/pkg/apiserver/conversion"
 	"github.com/thetechnick/orlop/pkg/apiserver/handlers"
 	pkgschema "github.com/thetechnick/orlop/pkg/apiserver/schema"
@@ -119,6 +121,20 @@ func (r *ResourceRegistry) CreateHandler(info ResourceInfo) (*handlers.ResourceH
 		info.Plural,
 		r.scheme,
 	)
+
+	// Create and set apply manager for server-side apply support
+	structural, err := schema.NewStructural(processor.GetValidationSchema())
+	if err != nil {
+		log.Printf("Warning: failed to create structural schema for %s, server-side apply disabled: %v", info.Plural, err)
+	} else {
+		applyMgr, err := apply.NewManager(r.scheme, structural, info.GVK)
+		if err != nil {
+			log.Printf("Warning: failed to create apply manager for %s, server-side apply disabled: %v", info.Plural, err)
+		} else {
+			handler.SetApplyManager(applyMgr)
+			log.Printf("Server-side apply enabled for %s", info.Plural)
+		}
+	}
 
 	return handler, nil
 }
