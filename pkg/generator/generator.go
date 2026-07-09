@@ -371,7 +371,13 @@ func (g *Generator) processFile(inputPath, outputPath string) error {
 
 	packageName := file.Name.Name
 
-	// groupversion_info.go is always copied as-is
+	// Check if package has been marked public (by any file in the package)
+	if !g.publicPackages[packageName] {
+		// Skip this file if package is not marked public
+		return nil
+	}
+
+	// groupversion_info.go is always copied as-is (if package is marked public)
 	if baseName == "groupversion_info.go" {
 		if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
 			return err
@@ -383,12 +389,6 @@ func (g *Generator) processFile(inputPath, outputPath string) error {
 		}
 
 		return os.WriteFile(outputPath, buf.Bytes(), 0644)
-	}
-
-	// Check if package has been marked public (by any file in the package)
-	if !g.publicPackages[packageName] {
-		// Skip this file if package is not marked public
-		return nil
 	}
 
 	filteredFile := g.filterFile(file)
