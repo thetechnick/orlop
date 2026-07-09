@@ -1382,11 +1382,11 @@ func TestWatchSendInitialEvents(t *testing.T) {
 		doRequest(t, "POST", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", namespace), createPayload)
 	}
 
-	// Start watch with sendInitialEvents=true
+	// Start watch with sendInitialEvents=true and allowWatchBookmarks=true
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	watchURL := fmt.Sprintf("%s/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects?watch=true&sendInitialEvents=true", baseURL, namespace)
+	watchURL := fmt.Sprintf("%s/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects?watch=true&sendInitialEvents=true&allowWatchBookmarks=true", baseURL, namespace)
 
 	watchReq, err := http.NewRequestWithContext(ctx, "GET", watchURL, nil)
 	if err != nil {
@@ -1465,6 +1465,29 @@ func TestWatchSendInitialEvents(t *testing.T) {
 		if !receivedNames[expectedName] {
 			t.Errorf("Did not receive initial event for %s", expectedName)
 		}
+	}
+
+	// After initial events, should receive a BOOKMARK with annotation
+	select {
+	case event := <-events:
+		if event["type"] != "BOOKMARK" {
+			t.Errorf("Expected BOOKMARK event after initial events, got %s", event["type"])
+		} else {
+			obj := event["object"].(map[string]interface{})
+			metadata := obj["metadata"].(map[string]interface{})
+			annotations, ok := metadata["annotations"].(map[string]interface{})
+			if !ok {
+				t.Error("BOOKMARK event missing annotations")
+			} else {
+				if annotations["k8s.io/initial-events-end"] != "true" {
+					t.Errorf("Expected k8s.io/initial-events-end annotation to be 'true', got %v", annotations["k8s.io/initial-events-end"])
+				} else {
+					t.Log("Received BOOKMARK with k8s.io/initial-events-end annotation")
+				}
+			}
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("Timeout waiting for BOOKMARK event after initial events")
 	}
 
 	// Cleanup

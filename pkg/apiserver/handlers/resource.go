@@ -311,14 +311,39 @@ func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, op
 			}
 			flusher.Flush()
 		}
+
+		// After sending initial events, send a BOOKMARK with annotation marking end of initial events
+		if allowWatchBookmarks {
+			initialBookmarkSent = true
+
+			bookmarkObj := map[string]interface{}{
+				"apiVersion": h.gvk.GroupVersion().String(),
+				"kind":       h.gvk.Kind,
+				"metadata": map[string]interface{}{
+					"resourceVersion": lastResourceVersion,
+					"annotations": map[string]interface{}{
+						"k8s.io/initial-events-end": "true",
+					},
+				},
+			}
+			watchEvent := map[string]interface{}{
+				"type":   "BOOKMARK",
+				"object": bookmarkObj,
+			}
+
+			if err := encoder.Encode(watchEvent); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
 	}
 
 	// If already caught up (requested RV >= current RV) OR list is empty (no historical events),
-	// send initial BOOKMARK immediately
+	// send initial BOOKMARK immediately (without sendInitialEvents)
 	// Compare as integers since resourceVersions are numeric strings
 	requestedRVInt, _ := strconv.ParseInt(requestedResourceVersion, 10, 64)
 	currentRVInt, _ := strconv.ParseInt(currentResourceVersion, 10, 64)
-	if allowWatchBookmarks && (requestedRVInt >= currentRVInt || listIsEmpty) {
+	if !sendInitialEvents && allowWatchBookmarks && (requestedRVInt >= currentRVInt || listIsEmpty) {
 		initialBookmarkSent = true
 
 		bookmarkObj := map[string]interface{}{
