@@ -10,18 +10,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-logr/logr"
 	"github.com/go-logr/stdr"
 	"github.com/thetechnick/orlop/pkg/apiserver"
 )
 
 func main() {
 	var (
-		address       string
-		privatePort   int
-		publicPort    int
-		corsOrigins   string
-		enablePublic  bool
+		address      string
+		privatePort  int
+		publicPort   int
+		corsOrigins  string
+		enablePublic bool
 	)
 
 	flag.StringVar(&address, "address", "0.0.0.0", "address to bind to")
