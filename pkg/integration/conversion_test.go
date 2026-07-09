@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -406,6 +407,163 @@ func TestConversion_UpdateViaPublicPreservesInternal(t *testing.T) {
 
 	if nested["internalField"] != "initial-nested-secret" {
 		t.Errorf("Expected nested.internalField to be preserved as 'initial-nested-secret', got %v", nested["internalField"])
+	}
+
+	// Cleanup
+	doConversionRequest(t, "DELETE", conversionPrivateBaseURL+fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/%s", namespace, name), nil)
+}
+
+func TestConversion_FilterPrivateMetadata(t *testing.T) {
+	ensureConversionTestServer(t)
+	namespace := "default"
+	name := "test-filter-private"
+
+	// Create object via PRIVATE API with both public and private labels/annotations
+	createPayload := map[string]interface{}{
+		"apiVersion": "test.orlop.thetechnick.ninja/v1",
+		"kind":       "Object",
+		"metadata": map[string]interface{}{
+			"name":      name,
+			"namespace": namespace,
+			"labels": map[string]interface{}{
+				"app":                                     "myapp",
+				"private.orlop.thetechnick.ninja/secret":  "hidden",
+				"private.orlop.thetechnick.ninja/owner":   "system",
+				"public-label":                            "visible",
+			},
+			"annotations": map[string]interface{}{
+				"description":                                  "public description",
+				"private.orlop.thetechnick.ninja/internal-id":  "12345",
+				"private.orlop.thetechnick.ninja/tracking-key": "xyz",
+				"public-annotation":                            "visible",
+			},
+		},
+		"spec": map[string]interface{}{
+			"publicField":   "test",
+			"internalField": "internal-value",
+			"nested": map[string]interface{}{
+				"publicField":   "nested-test",
+				"internalField": "internal-nested-value",
+			},
+		},
+		"status": map[string]interface{}{
+			"conditions": []string{"Ready", "private.orlop.thetechnick.ninja/InternalCheck", "private.orlop.thetechnick.ninja/SecretStatus", "Available"},
+		},
+	}
+
+	resp, body := doConversionRequest(t, "POST", conversionPrivateBaseURL+fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", namespace), createPayload)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Failed to create via private API: %d: %s", resp.StatusCode, body)
+	}
+
+	// Read via PUBLIC API
+	resp, body = doConversionRequest(t, "GET", conversionPublicBaseURL+fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/%s", namespace, name), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Failed to read via public API: %d: %s", resp.StatusCode, body)
+	}
+
+	var publicObj map[string]interface{}
+	if err := json.Unmarshal([]byte(body), &publicObj); err != nil {
+		t.Fatalf("Failed to unmarshal public object: %v", err)
+	}
+
+	metadata := publicObj["metadata"].(map[string]interface{})
+
+	// Check labels - private ones should be filtered
+	labels := metadata["labels"].(map[string]interface{})
+	if _, exists := labels["private.orlop.thetechnick.ninja/secret"]; exists {
+		t.Error("Private label 'private.orlop.thetechnick.ninja/secret' should be filtered in public API")
+	}
+	if _, exists := labels["private.orlop.thetechnick.ninja/owner"]; exists {
+		t.Error("Private label 'private.orlop.thetechnick.ninja/owner' should be filtered in public API")
+	}
+	if labels["app"] != "myapp" {
+		t.Errorf("Public label 'app' should be present, got %v", labels["app"])
+	}
+	if labels["public-label"] != "visible" {
+		t.Errorf("Public label 'public-label' should be present, got %v", labels["public-label"])
+	}
+
+	// Check annotations - private ones should be filtered
+	annotations := metadata["annotations"].(map[string]interface{})
+	if _, exists := annotations["private.orlop.thetechnick.ninja/internal-id"]; exists {
+		t.Error("Private annotation 'private.orlop.thetechnick.ninja/internal-id' should be filtered in public API")
+	}
+	if _, exists := annotations["private.orlop.thetechnick.ninja/tracking-key"]; exists {
+		t.Error("Private annotation 'private.orlop.thetechnick.ninja/tracking-key' should be filtered in public API")
+	}
+	if annotations["description"] != "public description" {
+		t.Errorf("Public annotation 'description' should be present, got %v", annotations["description"])
+	}
+	if annotations["public-annotation"] != "visible" {
+		t.Errorf("Public annotation 'public-annotation' should be present, got %v", annotations["public-annotation"])
+	}
+
+	// Check conditions - private ones should be filtered
+	status := publicObj["status"].(map[string]interface{})
+	conditionsRaw := status["conditions"].([]interface{})
+
+	// Convert to string slice
+	conditionTypes := make([]string, 0)
+	for _, c := range conditionsRaw {
+		conditionTypes = append(conditionTypes, c.(string))
+	}
+
+	// Should only have Ready and Available, not the private ones
+	if len(conditionTypes) != 2 {
+		t.Errorf("Expected 2 conditions after filtering, got %d: %v", len(conditionTypes), conditionTypes)
+	}
+
+	hasReady := false
+	hasAvailable := false
+	for _, ct := range conditionTypes {
+		if ct == "Ready" {
+			hasReady = true
+		}
+		if ct == "Available" {
+			hasAvailable = true
+		}
+		if strings.HasPrefix(ct, "private.orlop.thetechnick.ninja/") {
+			t.Errorf("Private condition '%s' should be filtered in public API", ct)
+		}
+	}
+
+	if !hasReady {
+		t.Error("Public condition 'Ready' should be present")
+	}
+	if !hasAvailable {
+		t.Error("Public condition 'Available' should be present")
+	}
+
+	// Read via PRIVATE API to verify original data is preserved
+	resp, body = doConversionRequest(t, "GET", conversionPrivateBaseURL+fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/%s", namespace, name), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Failed to read via private API: %d: %s", resp.StatusCode, body)
+	}
+
+	var privateObj map[string]interface{}
+	json.Unmarshal([]byte(body), &privateObj)
+
+	privateMetadata := privateObj["metadata"].(map[string]interface{})
+	privateLabels := privateMetadata["labels"].(map[string]interface{})
+	privateAnnotations := privateMetadata["annotations"].(map[string]interface{})
+
+	// Private API should have all labels and annotations
+	if _, exists := privateLabels["private.orlop.thetechnick.ninja/secret"]; !exists {
+		t.Error("Private label should be present in private API")
+	}
+	if _, exists := privateAnnotations["private.orlop.thetechnick.ninja/internal-id"]; !exists {
+		t.Error("Private annotation should be present in private API")
+	}
+
+	privateStatus := privateObj["status"].(map[string]interface{})
+	privateConditionsRaw := privateStatus["conditions"].([]interface{})
+	privateConditionTypes := make([]string, 0)
+	for _, c := range privateConditionsRaw {
+		privateConditionTypes = append(privateConditionTypes, c.(string))
+	}
+	if len(privateConditionTypes) != 4 {
+		t.Errorf("Expected 4 conditions in private API, got %d", len(privateConditionTypes))
 	}
 
 	// Cleanup

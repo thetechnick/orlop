@@ -3,7 +3,9 @@ package conversion
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -23,6 +25,7 @@ func NewConverter(publicScheme, privateScheme *runtime.Scheme) *Converter {
 
 // PrivateToPublic converts a private API object to its public representation.
 // Uses JSON round-trip for conversion since both types have the same GVK.
+// Filters out private labels, annotations, and conditions.
 func (c *Converter) PrivateToPublic(private runtime.Object) (runtime.Object, error) {
 	// Get the GVK from the private object
 	gvk := private.GetObjectKind().GroupVersionKind()
@@ -44,10 +47,115 @@ func (c *Converter) PrivateToPublic(private runtime.Object) (runtime.Object, err
 		return nil, fmt.Errorf("failed to unmarshal to public object: %w", err)
 	}
 
+	// Filter private labels and annotations
+	c.filterPrivateMetadata(public)
+
+	// Filter private conditions
+	c.filterPrivateConditions(public)
+
 	// Preserve GVK
 	public.GetObjectKind().SetGroupVersionKind(gvk)
 
 	return public, nil
+}
+
+// filterPrivateMetadata removes labels and annotations prefixed with private.orlop.thetechnick.ninja/
+func (c *Converter) filterPrivateMetadata(obj runtime.Object) {
+	const privatePrefix = "private.orlop.thetechnick.ninja/"
+
+	accessor, err := meta.Accessor(obj)
+	if err != nil {
+		return
+	}
+
+	// Filter labels
+	labels := accessor.GetLabels()
+	if labels != nil {
+		filtered := make(map[string]string)
+		for k, v := range labels {
+			if !strings.HasPrefix(k, privatePrefix) {
+				filtered[k] = v
+			}
+		}
+		accessor.SetLabels(filtered)
+	}
+
+	// Filter annotations
+	annotations := accessor.GetAnnotations()
+	if annotations != nil {
+		filtered := make(map[string]string)
+		for k, v := range annotations {
+			if !strings.HasPrefix(k, privatePrefix) {
+				filtered[k] = v
+			}
+		}
+		accessor.SetAnnotations(filtered)
+	}
+}
+
+// filterPrivateConditions removes conditions with types prefixed with private.orlop.thetechnick.ninja/
+func (c *Converter) filterPrivateConditions(obj runtime.Object) {
+	const privatePrefix = "private.orlop.thetechnick.ninja/"
+
+	// Convert to map to access status.conditions
+	jsonData, err := json.Marshal(obj)
+	if err != nil {
+		return
+	}
+
+	var objMap map[string]interface{}
+	if err := json.Unmarshal(jsonData, &objMap); err != nil {
+		return
+	}
+
+	// Check if status.conditions exists
+	status, ok := objMap["status"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	conditions, ok := status["conditions"].([]interface{})
+	if !ok {
+		return
+	}
+
+	// Filter conditions - handle both string arrays and object arrays
+	var filtered []interface{}
+	for _, cond := range conditions {
+		// Try as string first (simple condition type)
+		if condStr, ok := cond.(string); ok {
+			// Only include conditions that don't have the private prefix
+			if !strings.HasPrefix(condStr, privatePrefix) {
+				filtered = append(filtered, cond)
+			}
+			continue
+		}
+
+		// Try as object with type field (complex condition)
+		condMap, ok := cond.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		condType, ok := condMap["type"].(string)
+		if !ok {
+			continue
+		}
+		// Only include conditions that don't have the private prefix
+		if !strings.HasPrefix(condType, privatePrefix) {
+			filtered = append(filtered, cond)
+		}
+	}
+
+	// Update conditions in the status
+	status["conditions"] = filtered
+
+	// Marshal back and unmarshal into the object
+	filteredJSON, err := json.Marshal(objMap)
+	if err != nil {
+		return
+	}
+
+	json.Unmarshal(filteredJSON, obj)
 }
 
 // PublicToPrivate converts a public API object to its private representation.
