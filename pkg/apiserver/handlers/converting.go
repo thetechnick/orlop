@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -207,9 +209,9 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 	// Check if this is a watch request
 	if r.URL.Query().Get("watch") == "true" {
 		if namespace == "" {
-			log.Printf("[WATCH-CONVERTING] %s scope=cluster", h.gvk.Kind)
+			log.Printf("[WATCH-CONVERTING] %s scope=cluster uri=%s", h.gvk.Kind, r.RequestURI)
 		} else {
-			log.Printf("[WATCH-CONVERTING] %s namespace=%s", h.gvk.Kind, namespace)
+			log.Printf("[WATCH-CONVERTING] %s namespace=%s uri=%s", h.gvk.Kind, namespace, r.RequestURI)
 		}
 		h.handleWatch(w, r, opts)
 		return
@@ -278,8 +280,24 @@ func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.R
 	// Get resourceVersion to start from
 	resourceVersion := r.URL.Query().Get("resourceVersion")
 
-	// Check if client wants BOOKMARK events
+	// Parse watch parameters
 	allowWatchBookmarks := r.URL.Query().Get("allowWatchBookmarks") == "true"
+	sendInitialEvents := r.URL.Query().Get("sendInitialEvents") == "true"
+	resourceVersionMatch := r.URL.Query().Get("resourceVersionMatch")
+	timeoutSeconds := r.URL.Query().Get("timeoutSeconds")
+
+	log.Printf("[WATCH-CONVERTING] allowWatchBookmarks=%v sendInitialEvents=%v resourceVersionMatch=%s timeoutSeconds=%s",
+		allowWatchBookmarks, sendInitialEvents, resourceVersionMatch, timeoutSeconds)
+
+	// Apply timeout if specified
+	ctx := r.Context()
+	if timeoutSeconds != "" {
+		if timeout, err := strconv.ParseInt(timeoutSeconds, 10, 64); err == nil && timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+			defer cancel()
+		}
+	}
 
 	// Start watch
 	eventCh, stop, err := h.store.Watch(opts, resourceVersion)
@@ -311,26 +329,86 @@ func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.R
 	}
 
 	// Track last resource version for BOOKMARK events
-	// If no initial resource version, get current from store
-	lastResourceVersion := resourceVersion
-	if lastResourceVersion == "" {
-		// Get current list to obtain resource version
-		list, err := h.store.List(opts)
-		if err == nil {
-			lastResourceVersion = list.GetResourceVersion()
-		} else {
-			lastResourceVersion = "0"
+	// Get the current resource version from store to know when we're caught up
+	var currentResourceVersion string
+	var listIsEmpty bool
+	list, err := h.store.List(opts)
+	if err == nil {
+		currentResourceVersion = list.GetResourceVersion()
+		// Check if list is empty (no objects to replay)
+		items, _ := meta.ExtractList(list)
+		listIsEmpty = len(items) == 0
+	} else {
+		currentResourceVersion = "0"
+		listIsEmpty = true
+	}
+
+	lastResourceVersion := currentResourceVersion
+	initialBookmarkSent := false
+	requestedResourceVersion := resourceVersion
+	if requestedResourceVersion == "" {
+		requestedResourceVersion = "0"
+	}
+
+	encoder := json.NewEncoder(w)
+
+	// If sendInitialEvents=true, send all existing objects as ADDED events (converted to public)
+	if sendInitialEvents && err == nil {
+		items, _ := meta.ExtractList(list)
+		log.Printf("[WATCH-CONVERTING] Sending %d initial events", len(items))
+		for _, privateItem := range items {
+			// Convert private object to public
+			publicObj, err := h.converter.PrivateToPublic(privateItem)
+			if err != nil {
+				continue // Skip objects that fail conversion
+			}
+
+			watchEvent := map[string]interface{}{
+				"type":   "ADDED",
+				"object": publicObj,
+			}
+			if err := encoder.Encode(watchEvent); err != nil {
+				return
+			}
+			flusher.Flush()
 		}
 	}
 
+	// If already caught up (requested RV >= current RV) OR list is empty (no historical events),
+	// send initial BOOKMARK immediately
+	// Compare as integers since resourceVersions are numeric strings
+	requestedRVInt, _ := strconv.ParseInt(requestedResourceVersion, 10, 64)
+	currentRVInt, _ := strconv.ParseInt(currentResourceVersion, 10, 64)
+	if allowWatchBookmarks && (requestedRVInt >= currentRVInt || listIsEmpty) {
+		initialBookmarkSent = true
+
+		bookmarkObj := map[string]interface{}{
+			"apiVersion": h.gvk.GroupVersion().String(),
+			"kind":       h.gvk.Kind,
+			"metadata": map[string]interface{}{
+				"resourceVersion": lastResourceVersion,
+			},
+		}
+		watchEvent := map[string]interface{}{
+			"type":   "BOOKMARK",
+			"object": bookmarkObj,
+		}
+
+		if err := encoder.Encode(watchEvent); err != nil {
+			return
+		}
+		flusher.Flush()
+	}
+
 	// Stream events
-	encoder := json.NewEncoder(w)
+
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
+
 		case <-bookmarkCh:
-			// Send BOOKMARK event with current resource version
+			// Send periodic BOOKMARK event with current resource version
 			bookmarkObj := map[string]interface{}{
 				"apiVersion": h.gvk.GroupVersion().String(),
 				"kind":       h.gvk.Kind,
@@ -372,6 +450,34 @@ func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.R
 				return
 			}
 			flusher.Flush()
+
+			// Send initial BOOKMARK after we've caught up with the current resourceVersion
+			// This signals that all requested historical events have been delivered
+			if allowWatchBookmarks && !initialBookmarkSent {
+				// Check if this event's RV >= current RV (snapshot at watch start), meaning we've caught up
+				// Compare as integers since resourceVersions are numeric strings
+				eventRVInt, _ := strconv.ParseInt(event.ResourceVersion, 10, 64)
+				if eventRVInt >= currentRVInt {
+					initialBookmarkSent = true
+
+					bookmarkObj := map[string]interface{}{
+						"apiVersion": h.gvk.GroupVersion().String(),
+						"kind":       h.gvk.Kind,
+						"metadata": map[string]interface{}{
+							"resourceVersion": lastResourceVersion,
+						},
+					}
+					watchEvent := map[string]interface{}{
+						"type":   "BOOKMARK",
+						"object": bookmarkObj,
+					}
+
+					if err := encoder.Encode(watchEvent); err != nil {
+						return
+					}
+					flusher.Flush()
+				}
+			}
 		}
 	}
 }

@@ -1358,6 +1358,121 @@ func TestWatch(t *testing.T) {
 	}
 }
 
+func TestWatchSendInitialEvents(t *testing.T) {
+	namespace := "default"
+
+	// Create some objects first
+	for i := 1; i <= 3; i++ {
+		createPayload := map[string]interface{}{
+			"apiVersion": "test.orlop.thetechnick.ninja/v1",
+			"kind":       "Object",
+			"metadata": map[string]interface{}{
+				"name":      fmt.Sprintf("initial-event-test-%d", i),
+				"namespace": namespace,
+			},
+			"spec": map[string]interface{}{
+				"publicField":   fmt.Sprintf("value-%d", i),
+				"internalField": "internal",
+				"nested": map[string]interface{}{
+					"publicField":   "nested",
+					"internalField": "nested-internal",
+				},
+			},
+		}
+		doRequest(t, "POST", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", namespace), createPayload)
+	}
+
+	// Start watch with sendInitialEvents=true
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	watchURL := fmt.Sprintf("%s/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects?watch=true&sendInitialEvents=true", baseURL, namespace)
+
+	watchReq, err := http.NewRequestWithContext(ctx, "GET", watchURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to create watch request: %v", err)
+	}
+
+	client := &http.Client{}
+
+	type respResult struct {
+		resp *http.Response
+		err  error
+	}
+	respCh := make(chan respResult, 1)
+
+	go func() {
+		resp, err := client.Do(watchReq)
+		respCh <- respResult{resp, err}
+	}()
+
+	var watchResp *http.Response
+	select {
+	case result := <-respCh:
+		if result.err != nil {
+			t.Fatalf("Failed to start watch: %v", result.err)
+		}
+		watchResp = result.resp
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for watch connection")
+	}
+	defer watchResp.Body.Close()
+
+	if watchResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(watchResp.Body)
+		t.Fatalf("Expected status 200 for watch, got %d: %s", watchResp.StatusCode, body)
+	}
+
+	// Channel to collect watch events
+	events := make(chan map[string]interface{}, 20)
+
+	// Start reading watch events
+	go func() {
+		decoder := json.NewDecoder(watchResp.Body)
+		for {
+			var event map[string]interface{}
+			if err := decoder.Decode(&event); err != nil {
+				return
+			}
+			events <- event
+		}
+	}()
+
+	// Collect initial ADDED events - should receive at least 3 for our created objects
+	receivedNames := make(map[string]bool)
+	timeout := time.After(2 * time.Second)
+
+	for i := 0; i < 3; i++ {
+		select {
+		case event := <-events:
+			if event["type"] != "ADDED" {
+				t.Errorf("Expected ADDED event for initial events, got %s", event["type"])
+				continue
+			}
+			obj := event["object"].(map[string]interface{})
+			metadata := obj["metadata"].(map[string]interface{})
+			name := metadata["name"].(string)
+			receivedNames[name] = true
+			t.Logf("Received initial ADDED event for %s", name)
+		case <-timeout:
+			t.Fatalf("Timeout waiting for initial ADDED events, received %d/%d", len(receivedNames), 3)
+		}
+	}
+
+	// Verify we got all 3 objects
+	for i := 1; i <= 3; i++ {
+		expectedName := fmt.Sprintf("initial-event-test-%d", i)
+		if !receivedNames[expectedName] {
+			t.Errorf("Did not receive initial event for %s", expectedName)
+		}
+	}
+
+	// Cleanup
+	for i := 1; i <= 3; i++ {
+		doRequest(t, "DELETE", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/initial-event-test-%d", namespace, i), nil)
+	}
+}
+
 func TestOtherResource(t *testing.T) {
 	namespace := "default"
 	name := "test-other"
