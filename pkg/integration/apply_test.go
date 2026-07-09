@@ -67,15 +67,29 @@ spec:
 				"name": "apply-test-update",
 			},
 			"spec": map[string]interface{}{
-				"publicField": "original",
+				"publicField":   "original",
+				"internalField": "internal",
+				"nested": map[string]interface{}{
+					"publicField":   "nested-public",
+					"internalField": "nested-internal",
+				},
 			},
 		}
 		createJSON, _ := json.Marshal(createBody)
-		http.Post(
+		createResp, err := http.Post(
 			baseURL+"/apis/test.orlop.thetechnick.ninja/v1/namespaces/default/objects",
 			"application/json",
 			bytes.NewBuffer(createJSON),
 		)
+		if err != nil {
+			t.Fatalf("Create request failed: %v", err)
+		}
+		defer createResp.Body.Close()
+
+		if createResp.StatusCode != http.StatusCreated {
+			body, _ := io.ReadAll(createResp.Body)
+			t.Fatalf("Expected 201 Created, got %d: %s", createResp.StatusCode, body)
+		}
 
 		// Apply update
 		applyConfig := `
@@ -84,7 +98,7 @@ spec:
 `
 		req, _ := http.NewRequest(
 			"PATCH",
-			baseURL+"/apis/test.orlop.thetechnick.ninja/v1/namespaces/default/objects/apply-test-update?fieldManager=test-controller",
+			baseURL+"/apis/test.orlop.thetechnick.ninja/v1/namespaces/default/objects/apply-test-update?fieldManager=test-controller&force=true",
 			bytes.NewBufferString(applyConfig),
 		)
 		req.Header.Set("Content-Type", "application/apply-patch+yaml")
