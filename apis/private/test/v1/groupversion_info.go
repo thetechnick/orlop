@@ -1,5 +1,6 @@
 // +kubebuilder:object:generate=true
 // +groupName=test.orlop.thetechnick.ninja
+// +orlop:public
 package v1
 
 import (

@@ -28,6 +28,7 @@ type Generator struct {
 	typesImportPath string
 	inputBasePath   string
 	outputBasePath  string
+	publicPackages  map[string]bool // tracks which packages have +orlop:public marker
 }
 
 func NewGenerator(inputDir, outputDir string) (*Generator, error) {
@@ -46,6 +47,7 @@ func NewGenerator(inputDir, outputDir string) (*Generator, error) {
 		typesImportPath: "github.com/thetechnick/orlop/pkg/apiserver/types",
 		inputBasePath:   modulePath + "/" + inputDir,
 		outputBasePath:  modulePath + "/" + outputDir,
+		publicPackages:  make(map[string]bool),
 	}, nil
 }
 
@@ -174,6 +176,19 @@ func (g *Generator) analyzeFile(inputPath string) error {
 	file, err := parser.ParseFile(g.fset, inputPath, nil, parser.ParseComments)
 	if err != nil {
 		return err
+	}
+
+	packageName := file.Name.Name
+
+	// Track if this package has +orlop:public marker
+	if g.hasPackagePublicMarker(file) {
+		g.publicPackages[packageName] = true
+	}
+
+	// Check if package has been marked public (by any file in the package)
+	if !g.publicPackages[packageName] {
+		// Skip this file if package hasn't been marked public yet
+		return nil
 	}
 
 	typesWithPublicFields := make(map[string]bool)
@@ -318,6 +333,20 @@ func (g *Generator) hasPublicMarker(field *ast.Field) bool {
 	return false
 }
 
+func (g *Generator) hasPackagePublicMarker(file *ast.File) bool {
+	if file.Doc == nil {
+		return false
+	}
+
+	for _, comment := range file.Doc.List {
+		if strings.Contains(comment.Text, "+orlop:public") {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (g *Generator) collectReferencedTypes(expr ast.Expr) {
 	switch t := expr.(type) {
 	case *ast.Ident:
@@ -339,6 +368,10 @@ func (g *Generator) processFile(inputPath, outputPath string) error {
 	}
 
 	baseName := filepath.Base(inputPath)
+
+	packageName := file.Name.Name
+
+	// groupversion_info.go is always copied as-is
 	if baseName == "groupversion_info.go" {
 		if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
 			return err
@@ -350,6 +383,12 @@ func (g *Generator) processFile(inputPath, outputPath string) error {
 		}
 
 		return os.WriteFile(outputPath, buf.Bytes(), 0644)
+	}
+
+	// Check if package has been marked public (by any file in the package)
+	if !g.publicPackages[packageName] {
+		// Skip this file if package is not marked public
+		return nil
 	}
 
 	filteredFile := g.filterFile(file)
