@@ -95,7 +95,9 @@ func (g *Generator) Generate() error {
 		// If the file is directly under a package directory (not in vX subdir)
 		// and not groupversion_info.go, it's likely an aggregator
 		dir := filepath.Dir(relPath)
-		if !strings.Contains(dir, string(filepath.Separator)+"v") && filepath.Base(path) != "groupversion_info.go" {
+		// Check if dir contains /v or starts with v (for version directories like v1, v1alpha1, etc.)
+		isVersionedDir := strings.Contains(dir, string(filepath.Separator)+"v") || strings.HasPrefix(filepath.Base(dir), "v")
+		if !isVersionedDir && filepath.Base(path) != "groupversion_info.go" {
 			aggregatorFiles = append(aggregatorFiles, path)
 		} else {
 			files = append(files, path)
@@ -229,6 +231,7 @@ func (g *Generator) analyzeFile(inputPath string) error {
 				continue
 			}
 
+			// Add type if it's referenced by a field that references a public type
 			referencesPublicType := false
 			for _, field := range structType.Fields.List {
 				if g.fieldReferencesPublicType(field, typesWithPublicFields) {
@@ -241,6 +244,17 @@ func (g *Generator) analyzeFile(inputPath string) error {
 				g.publicTypes[typeSpec.Name.Name] = true
 			}
 
+			// Also add types referenced by fields with +orlop:public marker
+			for _, field := range structType.Fields.List {
+				if g.hasPublicMarker(field) {
+					// Add the field's type to referencedTypes for next iteration
+					fieldType := g.extractTypeName(field.Type)
+					if fieldType != "" {
+						g.referencedTypes[fieldType] = true
+					}
+				}
+			}
+
 			if baseName, ok := strings.CutSuffix(typeSpec.Name.Name, "List"); ok {
 				if g.publicTypes[baseName] || typesWithPublicFields[baseName] {
 					g.publicTypes[typeSpec.Name.Name] = true
@@ -249,11 +263,31 @@ func (g *Generator) analyzeFile(inputPath string) error {
 		}
 	}
 
+	// Add all referenced types to publicTypes
+	for typeName := range g.referencedTypes {
+		g.publicTypes[typeName] = true
+	}
+
 	return nil
 }
 
 func (g *Generator) fieldReferencesPublicType(field *ast.Field, publicTypes map[string]bool) bool {
 	return g.typeReferencesPublic(field.Type, publicTypes)
+}
+
+func (g *Generator) extractTypeName(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		return g.extractTypeName(t.X)
+	case *ast.ArrayType:
+		return g.extractTypeName(t.Elt)
+	case *ast.MapType:
+		// For maps, we might want both key and value, but for simplicity return value type
+		return g.extractTypeName(t.Value)
+	}
+	return ""
 }
 
 func (g *Generator) typeReferencesPublic(expr ast.Expr, publicTypes map[string]bool) bool {
@@ -532,29 +566,21 @@ func (g *Generator) filterType(expr ast.Expr) ast.Expr {
 }
 
 func (g *Generator) shouldIncludeField(field *ast.Field) (include bool, isPublic bool) {
+	// Embedded fields (unnamed) should always be included
 	if len(field.Names) == 0 {
 		return true, false
 	}
 
-	if field.Doc == nil {
-		fieldType := g.getTypeName(field.Type)
-		if g.publicTypes[fieldType] {
-			return true, false
-		}
-		return false, false
-	}
-
-	for _, comment := range field.Doc.List {
-		if strings.Contains(comment.Text, "+orlop:public") {
-			return true, true
+	// Check for +orlop:public marker
+	if field.Doc != nil {
+		for _, comment := range field.Doc.List {
+			if strings.Contains(comment.Text, "+orlop:public") {
+				return true, true
+			}
 		}
 	}
 
-	fieldType := g.getTypeName(field.Type)
-	if g.publicTypes[fieldType] {
-		return true, false
-	}
-
+	// If no marker, exclude the field
 	return false, false
 }
 

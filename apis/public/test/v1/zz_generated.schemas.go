@@ -91,6 +91,8 @@ properties:
     required:
     - publicField
     type: object
+  status:
+    type: object
 type: object
 `
 

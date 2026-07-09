@@ -9,7 +9,9 @@ type Object struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ObjectSpec   `json:"spec,omitempty"`
+	// +orlop:public
+	Spec ObjectSpec `json:"spec,omitempty"`
+	// +orlop:public
 	Status ObjectStatus `json:"status,omitempty"`
 }
 
@@ -18,6 +20,7 @@ type ObjectList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 
+	// +orlop:public
 	Items []Object `json:"items"`
 }
 

@@ -9,7 +9,8 @@ type Object struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ObjectSpec   `json:"spec,omitempty"`
+	Spec ObjectSpec `json:"spec,omitempty"`
+
 	Status ObjectStatus `json:"status,omitempty"`
 }
 

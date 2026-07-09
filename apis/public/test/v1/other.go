@@ -10,6 +10,8 @@ type Other struct {
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	Spec OtherSpec `json:"spec,omitempty"`
+
+	Status OtherStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -22,6 +24,9 @@ type OtherList struct {
 
 type OtherSpec struct {
 	PublicField string `json:"publicField"`
+}
+
+type OtherStatus struct {
 }
 
 func init() { register(&Other{}, &OtherList{}) }
