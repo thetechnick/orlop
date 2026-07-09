@@ -3,6 +3,8 @@
 package v1
 
 import (
+	_ "embed"
+
 	"github.com/thetechnick/orlop/pkg/apiserver/types"
 	apiext "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -13,97 +15,19 @@ import (
 // ObjectPlural is the plural name for Object resources.
 const ObjectPlural = "objects"
 
-// ObjectSchemaYAML contains the OpenAPI v3 schema for Object.
-const ObjectSchemaYAML = `
-properties:
-  apiVersion:
-    description: |-
-      APIVersion defines the versioned schema of this representation of an object.
-      Servers should convert recognized schemas to the latest internal value, and
-      may reject unrecognized values.
-      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
-    type: string
-  kind:
-    description: |-
-      Kind is a string value representing the REST resource this object represents.
-      Servers may infer this from the endpoint the client submits requests to.
-      Cannot be updated.
-      In CamelCase.
-      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
-    type: string
-  metadata:
-    type: object
-  spec:
-    properties:
-      defaultField:
-        default: default-value
-        type: string
-      internalField:
-        type: string
-      nested:
-        properties:
-          internalField:
-            type: string
-          publicField:
-            type: string
-        required:
-        - internalField
-        - publicField
-        type: object
-      publicField:
-        type: string
-    required:
-    - internalField
-    - nested
-    - publicField
-    type: object
-  status:
-    properties:
-      conditions:
-        items:
-          type: string
-        type: array
-    type: object
-type: object
-`
-
 // OtherPlural is the plural name for Other resources.
 const OtherPlural = "others"
 
-// OtherSchemaYAML contains the OpenAPI v3 schema for Other.
-const OtherSchemaYAML = `
-properties:
-  apiVersion:
-    description: |-
-      APIVersion defines the versioned schema of this representation of an object.
-      Servers should convert recognized schemas to the latest internal value, and
-      may reject unrecognized values.
-      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
-    type: string
-  kind:
-    description: |-
-      Kind is a string value representing the REST resource this object represents.
-      Servers may infer this from the endpoint the client submits requests to.
-      Cannot be updated.
-      In CamelCase.
-      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
-    type: string
-  metadata:
-    type: object
-  spec:
-    properties:
-      internalField:
-        type: string
-      publicField:
-        type: string
-    required:
-    - internalField
-    - publicField
-    type: object
-  status:
-    type: object
-type: object
-`
+var (
+	// ObjectSchemaYAML contains the OpenAPI v3 schema for Object.
+	//go:embed .schemas/object_schema.yaml
+	ObjectSchemaYAML string
+
+	// OtherSchemaYAML contains the OpenAPI v3 schema for Other.
+	//go:embed .schemas/other_schema.yaml
+	OtherSchemaYAML string
+
+)
 
 var (
 	// ObjectSchema is the parsed structural schema for Object.
