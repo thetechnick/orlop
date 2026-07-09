@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -15,6 +16,7 @@ import (
 func (h *ResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
+	log.Printf("[UPDATE-STATUS] %s namespace=%s name=%s", h.gvk.Kind, namespace, name)
 
 	// Parse request body
 	var updateMap map[string]interface{}
@@ -76,6 +78,7 @@ func (h *ResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Update in storage
 	if err := h.store.Update(clientObj); err != nil {
+		log.Printf("[UPDATE-STATUS] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {
@@ -85,6 +88,8 @@ func (h *ResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	log.Printf("[UPDATE-STATUS] %s namespace=%s name=%s status=updated", h.gvk.Kind, namespace, name)
 
 	// Return updated object
 	w.Header().Set("Content-Type", "application/json")

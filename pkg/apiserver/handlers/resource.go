@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -50,6 +51,7 @@ func NewResourceHandler(
 // Create handles POST requests to create a new resource.
 func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
+	log.Printf("[CREATE] %s namespace=%s", h.gvk.Kind, namespace)
 
 	// Parse request body as map for schema processing
 	var objMap map[string]interface{}
@@ -100,6 +102,7 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Store object
 	if err := h.store.Create(clientObj); err != nil {
+		log.Printf("[CREATE] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
 		if errors.IsAlreadyExists(err) {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
@@ -107,6 +110,8 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	log.Printf("[CREATE] %s namespace=%s name=%s status=created", h.gvk.Kind, namespace, name)
 
 	// Return created object
 	w.Header().Set("Content-Type", "application/json")
@@ -118,9 +123,11 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *ResourceHandler) Get(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
+	log.Printf("[GET] %s namespace=%s name=%s", h.gvk.Kind, namespace, name)
 
 	obj, err := h.store.Get(namespace, name)
 	if err != nil {
+		log.Printf("[GET] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
@@ -128,6 +135,8 @@ func (h *ResourceHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	log.Printf("[GET] %s namespace=%s name=%s status=found", h.gvk.Kind, namespace, name)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -137,6 +146,7 @@ func (h *ResourceHandler) Get(w http.ResponseWriter, r *http.Request) {
 // List handles GET requests to list resources.
 func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
+	log.Printf("[LIST] %s namespace=%s", h.gvk.Kind, namespace)
 
 	// Build list options from query parameters
 	opts := client.ListOptions{
@@ -147,6 +157,7 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	if labelSelectorStr := r.URL.Query().Get("labelSelector"); labelSelectorStr != "" {
 		selector, err := labels.Parse(labelSelectorStr)
 		if err != nil {
+			log.Printf("[LIST] %s namespace=%s error=invalid-label-selector", h.gvk.Kind, namespace)
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid label selector: %v", err))
 			return
 		}
@@ -155,18 +166,28 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	// Check if this is a watch request
 	if r.URL.Query().Get("watch") == "true" {
+		log.Printf("[WATCH] %s namespace=%s", h.gvk.Kind, namespace)
 		h.handleWatch(w, r, opts)
 		return
 	}
 
 	list, err := h.store.List(opts)
 	if err != nil {
+		log.Printf("[LIST] %s namespace=%s error=%v", h.gvk.Kind, namespace, err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list objects: %v", err))
 		return
 	}
 
 	// Set GVK on the list
 	list.GetObjectKind().SetGroupVersionKind(h.gvk.GroupVersion().WithKind(h.gvk.Kind + "List"))
+
+	listMeta, _ := meta.ListAccessor(list)
+	count := 0
+	if listMeta != nil {
+		items, _ := meta.ExtractList(list)
+		count = len(items)
+	}
+	log.Printf("[LIST] %s namespace=%s count=%d", h.gvk.Kind, namespace, count)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -230,6 +251,7 @@ func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, op
 func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
+	log.Printf("[UPDATE] %s namespace=%s name=%s", h.gvk.Kind, namespace, name)
 
 	// Get existing object to compare spec
 	existing, err := h.store.Get(namespace, name)
@@ -291,6 +313,7 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Update object
 	if err := h.store.Update(clientObj); err != nil {
+		log.Printf("[UPDATE] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {
@@ -300,6 +323,8 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	log.Printf("[UPDATE] %s namespace=%s name=%s status=updated", h.gvk.Kind, namespace, name)
 
 	// Return updated object
 	w.Header().Set("Content-Type", "application/json")
@@ -311,6 +336,8 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *ResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
+	contentType := r.Header.Get("Content-Type")
+	log.Printf("[PATCH] %s namespace=%s name=%s content-type=%s", h.gvk.Kind, namespace, name, contentType)
 
 	// Get existing object
 	existing, err := h.store.Get(namespace, name)
@@ -337,8 +364,7 @@ func (h *ResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Determine patch type from Content-Type header
-	contentType := r.Header.Get("Content-Type")
+	// Determine patch type from Content-Type header (already retrieved above for logging)
 	var patchedJSON []byte
 
 	switch contentType {
@@ -419,6 +445,7 @@ func (h *ResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
 
 	// Update object in storage
 	if err := h.store.Update(clientObj); err != nil {
+		log.Printf("[PATCH] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {
@@ -428,6 +455,8 @@ func (h *ResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	log.Printf("[PATCH] %s namespace=%s name=%s status=patched", h.gvk.Kind, namespace, name)
 
 	// Return patched object
 	w.Header().Set("Content-Type", "application/json")
@@ -439,8 +468,10 @@ func (h *ResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
 func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
+	log.Printf("[DELETE] %s namespace=%s name=%s", h.gvk.Kind, namespace, name)
 
 	if err := h.store.Delete(namespace, name); err != nil {
+		log.Printf("[DELETE] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
@@ -448,6 +479,8 @@ func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	log.Printf("[DELETE] %s namespace=%s name=%s status=deleted", h.gvk.Kind, namespace, name)
 
 	// Return success status
 	status := metav1.Status{

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -58,6 +59,7 @@ func NewConvertingResourceHandler(
 // Create handles POST requests to create a new resource.
 func (h *ConvertingResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
+	log.Printf("[CREATE-CONVERTING] %s namespace=%s", h.gvk.Kind, namespace)
 
 	// Parse request body as map for schema processing
 	var objMap map[string]interface{}
@@ -122,6 +124,7 @@ func (h *ConvertingResourceHandler) Create(w http.ResponseWriter, r *http.Reques
 
 	// Store private object (cast to client.Object)
 	if err := h.store.Create(privateObj.(client.Object)); err != nil {
+		log.Printf("[CREATE-CONVERTING] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
 		if errors.IsAlreadyExists(err) {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
@@ -129,6 +132,8 @@ func (h *ConvertingResourceHandler) Create(w http.ResponseWriter, r *http.Reques
 		}
 		return
 	}
+
+	log.Printf("[CREATE-CONVERTING] %s namespace=%s name=%s status=created", h.gvk.Kind, namespace, name)
 
 	// Convert stored private object back to public to get ResourceVersion
 	responsePublic, err := h.converter.PrivateToPublic(privateObj)
@@ -147,10 +152,12 @@ func (h *ConvertingResourceHandler) Create(w http.ResponseWriter, r *http.Reques
 func (h *ConvertingResourceHandler) Get(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
+	log.Printf("[GET-CONVERTING] %s namespace=%s name=%s", h.gvk.Kind, namespace, name)
 
 	// Get private object from storage
 	privateObj, err := h.store.Get(namespace, name)
 	if err != nil {
+		log.Printf("[GET-CONVERTING] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
@@ -166,6 +173,8 @@ func (h *ConvertingResourceHandler) Get(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	log.Printf("[GET-CONVERTING] %s namespace=%s name=%s status=found", h.gvk.Kind, namespace, name)
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(publicObj)
@@ -174,6 +183,7 @@ func (h *ConvertingResourceHandler) Get(w http.ResponseWriter, r *http.Request) 
 // List handles GET requests to list resources.
 func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
+	log.Printf("[LIST-CONVERTING] %s namespace=%s", h.gvk.Kind, namespace)
 
 	// Build list options from query parameters
 	opts := client.ListOptions{
@@ -192,6 +202,7 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 
 	// Check if this is a watch request
 	if r.URL.Query().Get("watch") == "true" {
+		log.Printf("[WATCH-CONVERTING] %s namespace=%s", h.gvk.Kind, namespace)
 		h.handleWatch(w, r, opts)
 		return
 	}
@@ -199,6 +210,7 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 	// Get private objects list from storage
 	privateList, err := h.store.List(opts)
 	if err != nil {
+		log.Printf("[LIST-CONVERTING] %s namespace=%s error=%v", h.gvk.Kind, namespace, err)
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list objects: %v", err))
 		return
 	}
@@ -237,6 +249,8 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 	// Set metadata and GVK
 	publicList.GetObjectKind().SetGroupVersionKind(listGVK)
 	publicList.SetResourceVersion(privateList.GetResourceVersion())
+
+	log.Printf("[LIST-CONVERTING] %s namespace=%s count=%d", h.gvk.Kind, namespace, len(publicObjects))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -302,6 +316,7 @@ func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.R
 func (h *ConvertingResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
+	log.Printf("[UPDATE-CONVERTING] %s namespace=%s name=%s", h.gvk.Kind, namespace, name)
 
 	// Get existing private object
 	existingPrivate, err := h.store.Get(namespace, name)
@@ -370,6 +385,7 @@ func (h *ConvertingResourceHandler) Update(w http.ResponseWriter, r *http.Reques
 
 	// Update object in storage (cast to client.Object)
 	if err := h.store.Update(privateObj.(client.Object)); err != nil {
+		log.Printf("[UPDATE-CONVERTING] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {
@@ -379,6 +395,8 @@ func (h *ConvertingResourceHandler) Update(w http.ResponseWriter, r *http.Reques
 		}
 		return
 	}
+
+	log.Printf("[UPDATE-CONVERTING] %s namespace=%s name=%s status=updated", h.gvk.Kind, namespace, name)
 
 	// Convert back to public for response
 	responsePublic, _ := h.converter.PrivateToPublic(privateObj)
@@ -392,6 +410,8 @@ func (h *ConvertingResourceHandler) Update(w http.ResponseWriter, r *http.Reques
 func (h *ConvertingResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
+	contentType := r.Header.Get("Content-Type")
+	log.Printf("[PATCH-CONVERTING] %s namespace=%s name=%s content-type=%s", h.gvk.Kind, namespace, name, contentType)
 
 	// Get existing private object
 	existingPrivate, err := h.store.Get(namespace, name)
@@ -488,6 +508,7 @@ func (h *ConvertingResourceHandler) Patch(w http.ResponseWriter, r *http.Request
 
 	// Update object in storage (cast to client.Object)
 	if err := h.store.Update(privateObj.(client.Object)); err != nil {
+		log.Printf("[PATCH-CONVERTING] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {
@@ -497,6 +518,8 @@ func (h *ConvertingResourceHandler) Patch(w http.ResponseWriter, r *http.Request
 		}
 		return
 	}
+
+	log.Printf("[PATCH-CONVERTING] %s namespace=%s name=%s status=patched", h.gvk.Kind, namespace, name)
 
 	// Convert back to public for response
 	responsePublic, _ := h.converter.PrivateToPublic(privateObj)
@@ -510,8 +533,10 @@ func (h *ConvertingResourceHandler) Patch(w http.ResponseWriter, r *http.Request
 func (h *ConvertingResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
+	log.Printf("[DELETE-CONVERTING] %s namespace=%s name=%s", h.gvk.Kind, namespace, name)
 
 	if err := h.store.Delete(namespace, name); err != nil {
+		log.Printf("[DELETE-CONVERTING] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
@@ -519,6 +544,8 @@ func (h *ConvertingResourceHandler) Delete(w http.ResponseWriter, r *http.Reques
 		}
 		return
 	}
+
+	log.Printf("[DELETE-CONVERTING] %s namespace=%s name=%s status=deleted", h.gvk.Kind, namespace, name)
 
 	// Return success status
 	status := metav1.Status{
@@ -539,6 +566,7 @@ func (h *ConvertingResourceHandler) Delete(w http.ResponseWriter, r *http.Reques
 func (h *ConvertingResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
+	log.Printf("[UPDATE-STATUS-CONVERTING] %s namespace=%s name=%s", h.gvk.Kind, namespace, name)
 
 	// Parse request body
 	var updateMap map[string]interface{}
@@ -600,6 +628,7 @@ func (h *ConvertingResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.
 
 	// Update in storage
 	if err := h.store.Update(updatedPrivate); err != nil {
+		log.Printf("[UPDATE-STATUS-CONVERTING] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {
@@ -609,6 +638,8 @@ func (h *ConvertingResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.
 		}
 		return
 	}
+
+	log.Printf("[UPDATE-STATUS-CONVERTING] %s namespace=%s name=%s status=updated", h.gvk.Kind, namespace, name)
 
 	// Convert to public for response
 	responsePublic, _ := h.converter.PrivateToPublic(updatedPrivate)
