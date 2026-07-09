@@ -291,6 +291,42 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		accessor.SetGeneration(existingAccessor.GetGeneration())
 	}
 
+	// Preserve deletionTimestamp - it cannot be changed via Update
+	// Only Delete operation can set it, and only finalizer removal can clear it
+	if deletionTimestamp := existingAccessor.GetDeletionTimestamp(); deletionTimestamp != nil {
+		accessor.SetDeletionTimestamp(deletionTimestamp)
+
+		// If object is being deleted and all finalizers are removed, perform hard delete
+		if len(accessor.GetFinalizers()) == 0 {
+			if err := h.store.Delete(namespace, name); err != nil {
+				h.logger.Error(err, "Failed to hard delete after finalizers removed", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
+				if errors.IsNotFound(err) {
+					writeError(w, http.StatusNotFound, err.Error())
+				} else {
+					writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to delete object: %v", err))
+				}
+				return
+			}
+
+			h.logger.Info("Hard deleted after finalizers removed", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
+
+			// Return success status for deletion
+			status := metav1.Status{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "v1",
+					Kind:       "Status",
+				},
+				Status: metav1.StatusSuccess,
+				Code:   http.StatusOK,
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(status)
+			return
+		}
+	}
+
 	// Set GVK
 	clientObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
@@ -407,13 +443,71 @@ func (h *ResourceHandler) ApplyPatch(w http.ResponseWriter, r *http.Request) {
 }
 
 // Delete handles DELETE requests to delete a resource.
+// Implements the Kubernetes finalizer deletion flow:
+// 1. If object has finalizers, set deletionTimestamp and update (soft delete)
+// 2. If object has no finalizers or deletionTimestamp is already set, delete immediately
 func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
 	h.logger.V(1).Info("Delete request", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
+	// Get the existing object to check for finalizers
+	existing, err := h.store.Get(namespace, name)
+	if err != nil {
+		h.logger.Error(err, "Delete failed - get object", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
+		if errors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get object: %v", err))
+		}
+		return
+	}
+
+	accessor, err := meta.Accessor(existing)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to access metadata: %v", err))
+		return
+	}
+
+	// Check if object has finalizers and is not already being deleted
+	finalizers := accessor.GetFinalizers()
+	deletionTimestamp := accessor.GetDeletionTimestamp()
+
+	if len(finalizers) > 0 {
+		if deletionTimestamp == nil {
+			// Soft delete: set deletionTimestamp and update the object
+			now := metav1.Now()
+			accessor.SetDeletionTimestamp(&now)
+
+			// Set GVK for update
+			existing.GetObjectKind().SetGroupVersionKind(h.gvk)
+
+			// Update the object with deletionTimestamp
+			if err := h.store.Update(existing); err != nil {
+				h.logger.Error(err, "Delete failed - update with deletionTimestamp", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
+				if errors.IsConflict(err) {
+					writeError(w, http.StatusConflict, err.Error())
+				} else {
+					writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update object: %v", err))
+				}
+				return
+			}
+
+			h.logger.Info("Marked for deletion (finalizers present)", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "finalizers", finalizers)
+		} else {
+			h.logger.V(1).Info("Already marked for deletion", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "finalizers", finalizers)
+		}
+
+		// Return the object with deletionTimestamp (whether just set or already present)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(existing)
+		return
+	}
+
+	// Hard delete: no finalizers or already marked for deletion
 	if err := h.store.Delete(namespace, name); err != nil {
-		h.logger.Error(err, "Delete failed", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
+		h.logger.Error(err, "Delete failed - hard delete", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
