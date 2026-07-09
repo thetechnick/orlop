@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/thetechnick/orlop/pkg/apiserver/storage"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 func setupTestBroadcaster(t *testing.T) (*PostgresBroadcaster, func()) {
@@ -20,11 +22,21 @@ func setupTestBroadcaster(t *testing.T) (*PostgresBroadcaster, func()) {
 		return nil, func() {}
 	}
 
+	// Create test scheme
+	scheme := runtime.NewScheme()
+	gvk := schema.GroupVersionKind{
+		Group:   "test.example.com",
+		Version: "v1",
+		Kind:    "TestObject",
+	}
+
 	broadcaster, err := NewPostgresBroadcaster(context.Background(), PostgresBroadcasterConfig{
 		DB:          db,
 		ConnString:  connString,
 		ChannelName: "test_events",
 		TableName:   "event_log",
+		Scheme:      scheme,
+		GVK:         gvk,
 	})
 	if err != nil {
 		cleanup()
@@ -379,6 +391,14 @@ func TestPostgresBroadcaster_MultiInstance(t *testing.T) {
 		}
 		defer cleanup()
 
+		// Create test scheme
+		scheme := runtime.NewScheme()
+		gvk := schema.GroupVersionKind{
+			Group:   "test.example.com",
+			Version: "v1",
+			Kind:    "TestObject",
+		}
+
 		// Create two broadcaster instances
 		ctx := context.Background()
 		b1, err := NewPostgresBroadcaster(ctx, PostgresBroadcasterConfig{
@@ -386,6 +406,8 @@ func TestPostgresBroadcaster_MultiInstance(t *testing.T) {
 			ConnString:  connString,
 			ChannelName: "multi_test",
 			TableName:   "event_log_multi",
+			Scheme:      scheme,
+			GVK:         gvk,
 		})
 		if err != nil {
 			t.Fatalf("Failed to create broadcaster 1: %v", err)
@@ -397,6 +419,8 @@ func TestPostgresBroadcaster_MultiInstance(t *testing.T) {
 			ConnString:  connString,
 			ChannelName: "multi_test",
 			TableName:   "event_log_multi",
+			Scheme:      scheme,
+			GVK:         gvk,
 		})
 		if err != nil {
 			t.Fatalf("Failed to create broadcaster 2: %v", err)

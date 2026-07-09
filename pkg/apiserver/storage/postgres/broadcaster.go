@@ -11,6 +11,10 @@ import (
 
 	"github.com/lib/pq"
 	"github.com/thetechnick/orlop/pkg/apiserver/storage"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // PostgresBroadcaster implements storage.EventBroadcaster using PostgreSQL LISTEN/NOTIFY
@@ -22,6 +26,8 @@ type PostgresBroadcaster struct {
 	cancel      context.CancelFunc
 	channelName string
 	tableName   string
+	scheme      *runtime.Scheme
+	gvk         schema.GroupVersionKind
 
 	mu          sync.RWMutex
 	subscribers map[int]chan storage.WatchEvent
@@ -32,9 +38,11 @@ type PostgresBroadcaster struct {
 // PostgresBroadcasterConfig configures the SQL broadcaster.
 type PostgresBroadcasterConfig struct {
 	DB          *sql.DB
-	ConnString  string // For pq.Listener
-	ChannelName string // LISTEN/NOTIFY channel name
-	TableName   string // Event log table name
+	ConnString  string                 // For pq.Listener
+	ChannelName string                 // LISTEN/NOTIFY channel name
+	TableName   string                 // Event log table name
+	Scheme      *runtime.Scheme        // Required for object deserialization
+	GVK         schema.GroupVersionKind // Required for setting TypeMeta
 }
 
 // NewPostgresBroadcaster creates a broadcaster backed by PostgreSQL.
@@ -65,6 +73,8 @@ func NewPostgresBroadcaster(ctx context.Context, config PostgresBroadcasterConfi
 		cancel:      cancel,
 		channelName: channelName,
 		tableName:   tableName,
+		scheme:      config.Scheme,
+		gvk:         config.GVK,
 		subscribers: make(map[int]chan storage.WatchEvent),
 	}
 
@@ -160,20 +170,57 @@ func (b *PostgresBroadcaster) parseNotification(payload string) (storage.WatchEv
 		return storage.WatchEvent{}, err
 	}
 
-	// Deserialize object
-	var obj map[string]interface{}
-	if err := json.Unmarshal(event.Object, &obj); err != nil {
-		return storage.WatchEvent{}, err
+	// Reconstruct the typed object using the scheme
+	obj, err := b.reconstructObject(event.Object)
+	if err != nil {
+		return storage.WatchEvent{}, fmt.Errorf("failed to reconstruct object: %w", err)
 	}
 
-	// Create unstructured object
-	// Note: In production, properly reconstruct the typed object
-	// For now, return nil object - callers should handle this
 	return storage.WatchEvent{
 		Type:            event.Type,
 		ResourceVersion: event.ResourceVersion,
-		Object:          nil, // TODO: Properly reconstruct typed object
+		Object:          obj,
 	}, nil
+}
+
+// reconstructObject deserializes JSON data into a typed client.Object using the scheme.
+func (b *PostgresBroadcaster) reconstructObject(data []byte) (client.Object, error) {
+	if b.scheme == nil || b.gvk.Empty() {
+		// Fallback to unstructured if no scheme/GVK provided
+		obj := &unstructured.Unstructured{}
+		if err := json.Unmarshal(data, &obj.Object); err != nil {
+			return nil, err
+		}
+		return obj, nil
+	}
+
+	// Create a new typed object from the scheme
+	obj, err := b.scheme.New(b.gvk)
+	if err != nil {
+		// Type not registered in scheme, fallback to unstructured
+		unstruct := &unstructured.Unstructured{}
+		if err := json.Unmarshal(data, &unstruct.Object); err != nil {
+			return nil, err
+		}
+		unstruct.SetGroupVersionKind(b.gvk)
+		return unstruct, nil
+	}
+
+	// Unmarshal JSON directly into the typed object
+	if err := json.Unmarshal(data, obj); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal into typed object: %w", err)
+	}
+
+	// Ensure GVK is set on the object
+	obj.GetObjectKind().SetGroupVersionKind(b.gvk)
+
+	// Assert that the object implements client.Object
+	clientObj, ok := obj.(client.Object)
+	if !ok {
+		return nil, fmt.Errorf("object does not implement client.Object")
+	}
+
+	return clientObj, nil
 }
 
 // broadcastToSubscribers sends an event to all active subscribers.
@@ -225,19 +272,11 @@ func (b *PostgresBroadcaster) Broadcast(event storage.WatchEvent) {
 	}
 
 	// Send NOTIFY
-	payload := map[string]interface{}{
-		"type":            event.Type,
-		"resourceVersion": event.ResourceVersion,
-		"object":          objectData,
-	}
+	// Build payload with raw JSON object to avoid double encoding
+	payload := fmt.Sprintf(`{"type":"%s","resourceVersion":"%s","object":%s}`,
+		event.Type, event.ResourceVersion, string(objectData))
 
-	payloadJSON, err := json.Marshal(payload)
-	if err != nil {
-		fmt.Printf("Failed to marshal notification: %v\n", err)
-		return
-	}
-
-	notifyQuery := fmt.Sprintf("NOTIFY %s, '%s'", b.channelName, string(payloadJSON))
+	notifyQuery := fmt.Sprintf("NOTIFY %s, '%s'", b.channelName, payload)
 	_, err = b.db.ExecContext(ctx, notifyQuery)
 	if err != nil {
 		fmt.Printf("Failed to send NOTIFY: %v\n", err)
@@ -263,8 +302,8 @@ func (b *PostgresBroadcaster) Subscribe(sinceResourceVersion string) (<-chan sto
 	ch := make(chan storage.WatchEvent, 100)
 	b.subscribers[id] = ch
 
-	// Send historical events if requested
-	if sinceResourceVersion != "" && sinceResourceVersion != "0" {
+	// Send historical events if requested (including from "0")
+	if sinceResourceVersion != "" {
 		go b.sendHistoricalEvents(ch, sinceResourceVersion)
 	}
 
@@ -308,17 +347,17 @@ func (b *PostgresBroadcaster) sendHistoricalEvents(ch chan storage.WatchEvent, s
 			continue
 		}
 
-		// Deserialize object
-		var obj map[string]interface{}
-		if err := json.Unmarshal(objectData, &obj); err != nil {
-			fmt.Printf("Failed to unmarshal object: %v\n", err)
+		// Reconstruct the typed object using the scheme
+		obj, err := b.reconstructObject(objectData)
+		if err != nil {
+			fmt.Printf("Failed to reconstruct object: %v\n", err)
 			continue
 		}
 
 		event := storage.WatchEvent{
 			Type:            eventType,
 			ResourceVersion: strconv.FormatInt(resourceVersion, 10),
-			// Object: properly reconstruct typed object here
+			Object:          obj,
 		}
 
 		select {

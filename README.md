@@ -296,23 +296,68 @@ This allows consumers of the public API to register all types using `test.AddToS
 
 ## Testing
 
-### Integration Tests
+Orlop includes comprehensive test coverage with unit tests, integration tests, and PostgreSQL storage backend tests.
 
-Run the full integration test suite:
+### Quick Start
 
 ```bash
-go test -v ./pkg/integration
+# Run all tests (including PostgreSQL tests with auto-started database)
+make test-all
+
+# Run only unit tests (without database)
+make test
+
+# Run only PostgreSQL tests
+make test-postgres
+
+# Generate coverage report
+make test-coverage
 ```
 
-Tests cover:
-- Object CRUD operations
-- Schema validation
-- Field defaulting
-- Unknown field pruning
-- Status subresource updates
-- Generation tracking
-- CORS headers
-- Multiple resource types
+### Test Categories
+
+**Unit Tests:**
+- In-memory storage and watch (`pkg/apiserver/storage/memory`)
+- Type conversion logic (`pkg/apiserver/conversion`)
+- Fast, no external dependencies
+
+**Integration Tests:**
+- Full API server lifecycle tests (`pkg/integration`)
+- Tests cover: CRUD operations, schema validation, defaulting, pruning, status subresource, CORS
+
+**PostgreSQL Tests:**
+- Database-backed storage and event broadcaster (`pkg/apiserver/storage/postgres`)
+- Requires PostgreSQL (automatically started via Docker with Makefile)
+- Tests persistence, multi-instance support, LISTEN/NOTIFY events
+
+### PostgreSQL Test Database
+
+The Makefile manages a PostgreSQL test database automatically:
+
+```bash
+# Start PostgreSQL (runs in Docker on port 5433)
+make postgres-start
+
+# Stop PostgreSQL (keeps data)
+make postgres-stop
+
+# Remove PostgreSQL container completely
+make postgres-clean
+
+# View PostgreSQL logs
+make postgres-logs
+
+# Connect with psql
+make postgres-psql
+```
+
+**Configuration:**
+- Container: `orlop-test-postgres`
+- Port: `5433` (avoids conflicts with local PostgreSQL on 5432)
+- Database: `orlop_test`
+- Credentials: `orlop` / `orlop_test_password`
+
+See [TESTING.md](./TESTING.md) for detailed testing documentation including CI setup, debugging, and test architecture
 
 ### Manual Testing
 
