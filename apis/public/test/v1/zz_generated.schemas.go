@@ -15,8 +15,14 @@ import (
 // ObjectPlural is the plural name for Object resources.
 const ObjectPlural = "objects"
 
+// ObjectSingular is the singular name for Object resources.
+const ObjectSingular = "object"
+
 // OtherPlural is the plural name for Other resources.
 const OtherPlural = "others"
+
+// OtherSingular is the singular name for Other resources.
+const OtherSingular = "other"
 
 var (
 	// ObjectSchemaYAML contains the OpenAPI v3 schema for Object.
@@ -76,11 +82,13 @@ func GetResourceInfos() []types.ResourceInfo {
 		{
 			GVK:        GroupVersion.WithKind("Object"),
 			Plural:     ObjectPlural,
+			Singular:   ObjectSingular,
 			SchemaYAML: ObjectSchemaYAML,
 		},
 		{
 			GVK:        GroupVersion.WithKind("Other"),
 			Plural:     OtherPlural,
+			Singular:   OtherSingular,
 			SchemaYAML: OtherSchemaYAML,
 		},
 	}

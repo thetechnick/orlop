@@ -16,6 +16,7 @@ import (
 type schemaInfo struct {
 	typeName string
 	plural   string
+	singular string
 	schema   *apiextv1.JSONSchemaProps
 }
 
@@ -141,6 +142,7 @@ func (g *Generator) embedSchemas(crdDir string, targetDir string) error {
 		schemas = append(schemas, schemaInfo{
 			typeName: crd.Spec.Names.Kind,
 			plural:   crd.Spec.Names.Plural,
+			singular: crd.Spec.Names.Singular,
 			schema:   version.Schema.OpenAPIV3Schema,
 		})
 
@@ -205,6 +207,10 @@ func (g *Generator) generateSchemaGoFile(outputPath, packageDir string, schemas 
 		// Plural name constant
 		source.WriteString(fmt.Sprintf("// %sPlural is the plural name for %s resources.\n", s.typeName, s.typeName))
 		source.WriteString(fmt.Sprintf("const %sPlural = %q\n\n", s.typeName, s.plural))
+
+		// Singular name constant
+		source.WriteString(fmt.Sprintf("// %sSingular is the singular name for %s resources.\n", s.typeName, s.typeName))
+		source.WriteString(fmt.Sprintf("const %sSingular = %q\n\n", s.typeName, s.singular))
 	}
 
 	// Add go:embed directives and variables
@@ -263,6 +269,7 @@ func (g *Generator) generateSchemaGoFile(outputPath, packageDir string, schemas 
 		source.WriteString("\t\t{\n")
 		source.WriteString(fmt.Sprintf("\t\t\tGVK:        GroupVersion.WithKind(%q),\n", s.typeName))
 		source.WriteString(fmt.Sprintf("\t\t\tPlural:     %sPlural,\n", s.typeName))
+		source.WriteString(fmt.Sprintf("\t\t\tSingular:   %sSingular,\n", s.typeName))
 		source.WriteString(fmt.Sprintf("\t\t\tSchemaYAML: %sSchemaYAML,\n", s.typeName))
 		source.WriteString("\t\t},\n")
 	}

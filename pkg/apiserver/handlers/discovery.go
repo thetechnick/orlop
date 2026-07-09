@@ -158,10 +158,11 @@ func (h *DiscoveryHandler) APIResourceList(w http.ResponseWriter, r *http.Reques
 	for _, res := range h.resources {
 		if res.GVK.Group == group && res.GVK.Version == version {
 			resource := metav1.APIResource{
-				Name:       res.Plural,
-				Kind:       res.GVK.Kind,
-				Namespaced: true,
-				Verbs:      metav1.Verbs{"create", "delete", "get", "list", "patch", "update", "watch"},
+				Name:         res.Plural,
+				SingularName: res.Singular,
+				Kind:         res.GVK.Kind,
+				Namespaced:   true,
+				Verbs:        metav1.Verbs{"create", "delete", "get", "list", "patch", "update", "watch"},
 			}
 
 			// Add main resource
@@ -169,10 +170,11 @@ func (h *DiscoveryHandler) APIResourceList(w http.ResponseWriter, r *http.Reques
 
 			// Add status subresource
 			statusResource := metav1.APIResource{
-				Name:       res.Plural + "/status",
-				Kind:       res.GVK.Kind,
-				Namespaced: true,
-				Verbs:      metav1.Verbs{"get", "patch", "update"},
+				Name:         res.Plural + "/status",
+				SingularName: res.Singular,
+				Kind:         res.GVK.Kind,
+				Namespaced:   true,
+				Verbs:        metav1.Verbs{"get", "patch", "update"},
 			}
 			resourceList.APIResources = append(resourceList.APIResources, statusResource)
 		}
