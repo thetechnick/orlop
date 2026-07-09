@@ -13,21 +13,57 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// MemoryStoreOption configures a MemoryStore during creation.
+type MemoryStoreOption func(*MemoryStore)
+
+// WithBroadcaster sets a custom EventBroadcaster for the store.
+// If not provided, defaults to in-memory Watcher.
+func WithBroadcaster(broadcaster EventBroadcaster) MemoryStoreOption {
+	return func(s *MemoryStore) {
+		s.broadcaster = broadcaster
+	}
+}
+
+// WithBroadcasterFactory sets a factory function to create the EventBroadcaster.
+func WithBroadcasterFactory(factory EventBroadcasterFactory) MemoryStoreOption {
+	return func(s *MemoryStore) {
+		s.broadcaster = factory()
+	}
+}
+
 // NewMemoryStore creates a new MemoryStore for a specific resource type.
-// Each store has its own resource version counter and watcher.
-func NewMemoryStore(resourceType string, scheme *runtime.Scheme, gvk schema.GroupVersionKind) *MemoryStore {
-	return &MemoryStore{
+// Each store has its own resource version counter and event broadcaster.
+//
+// By default, uses in-memory Watcher. To use external database broadcasting:
+//
+//	store := NewMemoryStore("objects", scheme, gvk,
+//	    WithBroadcaster(NewMongoDBBroadcaster(client, "db", "collection")))
+func NewMemoryStore(resourceType string, scheme *runtime.Scheme, gvk schema.GroupVersionKind, opts ...MemoryStoreOption) *MemoryStore {
+	store := &MemoryStore{
 		resourceType: resourceType,
 		objects:      make(map[string]client.Object),
 		scheme:       scheme,
 		gvk:          gvk,
-		watcher:      NewWatcher(50), // Buffer 50 events
 	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(store)
+	}
+
+	// Default to in-memory watcher if no broadcaster provided
+	if store.broadcaster == nil {
+		store.broadcaster = NewWatcher(50) // Buffer 50 events
+	}
+
+	return store
 }
 
 // MemoryStore implements ResourceStore using an in-memory map.
 // Each MemoryStore instance is for a specific resource type and has its own
-// resource version counter and watcher.
+// resource version counter and event broadcaster.
+//
+// The broadcaster can be swapped to use external databases for event distribution.
 type MemoryStore struct {
 	mu                     sync.RWMutex
 	resourceType           string
@@ -35,7 +71,7 @@ type MemoryStore struct {
 	scheme                 *runtime.Scheme          // For creating list objects
 	gvk                    schema.GroupVersionKind  // For list metadata
 	resourceVersionCounter atomic.Int64             // Per-resource version counter
-	watcher                *Watcher                 // Per-resource watcher
+	broadcaster            EventBroadcaster         // Pluggable event broadcaster
 }
 
 // Create creates a new resource.
@@ -61,7 +97,7 @@ func (s *MemoryStore) Create(obj client.Object) error {
 	s.objects[key] = obj.DeepCopyObject().(client.Object)
 
 	// Broadcast watch event
-	watcher := s.watcher
+	watcher := s.broadcaster
 	watcher.Broadcast(WatchEvent{
 		Type:            "ADDED",
 		Object:          obj.DeepCopyObject().(client.Object),
@@ -180,7 +216,7 @@ func (s *MemoryStore) Update(obj client.Object) error {
 	s.objects[key] = obj.DeepCopyObject().(client.Object)
 
 	// Broadcast watch event
-	watcher := s.watcher
+	watcher := s.broadcaster
 	watcher.Broadcast(WatchEvent{
 		Type:            "MODIFIED",
 		Object:          obj.DeepCopyObject().(client.Object),
@@ -205,7 +241,7 @@ func (s *MemoryStore) Delete(namespace, name string) error {
 	delete(s.objects, key)
 
 	// Broadcast watch event (use current RV since delete doesn't change it)
-	watcher := s.watcher
+	watcher := s.broadcaster
 	watcher.Broadcast(WatchEvent{
 		Type:            "DELETED",
 		Object:          obj.DeepCopyObject().(client.Object),
@@ -250,10 +286,10 @@ func (s *MemoryStore) setResourceVersion(obj runtime.Object, version int64) erro
 
 // Watch starts watching for changes starting from the given resource version.
 func (s *MemoryStore) Watch(opts client.ListOptions, resourceVersion string) (<-chan WatchEvent, func(), error) {
-	watcher := s.watcher
+	watcher := s.broadcaster
 
 	// Subscribe to watch events
-	eventCh, id, err := watcher.Subscribe(resourceVersion)
+	eventCh, stopSubscription, err := watcher.Subscribe(resourceVersion)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -265,7 +301,7 @@ func (s *MemoryStore) Watch(opts client.ListOptions, resourceVersion string) (<-
 	// Start filtering goroutine
 	go func() {
 		defer close(outCh)
-		defer watcher.Unsubscribe(id)
+		defer stopSubscription()
 
 		for {
 			select {

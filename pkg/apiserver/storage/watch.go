@@ -11,7 +11,7 @@ import (
 
 // WatchEvent represents a resource change event with its resource version.
 type WatchEvent struct {
-	Type            string // ADDED, MODIFIED, DELETED
+	Type            string // ADDED, MODIFIED, DELETED, BOOKMARK
 	Object          client.Object
 	ResourceVersion string
 }
@@ -87,20 +87,26 @@ func (wb *WatchBuffer) getAllEvents() []WatchEvent {
 }
 
 // Watcher manages watch connections for a resource type.
+// Implements EventBroadcaster interface for in-memory event distribution.
 type Watcher struct {
 	mu          sync.RWMutex
 	buffer      *WatchBuffer
 	subscribers map[int]chan WatchEvent
 	nextID      int
+	closed      bool
 }
 
 // NewWatcher creates a new watcher with event buffering.
+// This is the default in-memory implementation of EventBroadcaster.
 func NewWatcher(bufferSize int) *Watcher {
 	return &Watcher{
 		buffer:      NewWatchBuffer(bufferSize),
 		subscribers: make(map[int]chan WatchEvent),
 	}
 }
+
+// Verify that Watcher implements EventBroadcaster at compile time.
+var _ EventBroadcaster = (*Watcher)(nil)
 
 // Broadcast sends an event to all subscribers and adds it to the buffer.
 func (w *Watcher) Broadcast(event WatchEvent) {
@@ -121,9 +127,62 @@ func (w *Watcher) Broadcast(event WatchEvent) {
 }
 
 // Subscribe creates a new watch channel and optionally sends historical events.
-func (w *Watcher) Subscribe(sinceResourceVersion string) (<-chan WatchEvent, int, error) {
+// Implements EventBroadcaster interface.
+func (w *Watcher) Subscribe(sinceResourceVersion string) (<-chan WatchEvent, func(), error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
+	if w.closed {
+		return nil, nil, fmt.Errorf("watcher is closed")
+	}
+
+	id := w.nextID
+	w.nextID++
+
+	// Buffered channel to avoid blocking broadcaster
+	ch := make(chan WatchEvent, 100)
+	w.subscribers[id] = ch
+
+	// Send historical events if requested
+	if sinceResourceVersion != "" {
+		events, err := w.buffer.GetEventsSince(sinceResourceVersion)
+		if err != nil {
+			close(ch)
+			delete(w.subscribers, id)
+			return nil, nil, err
+		}
+
+		// Send historical events
+		for _, event := range events {
+			select {
+			case ch <- event:
+			default:
+				// Channel full, close it
+				close(ch)
+				delete(w.subscribers, id)
+				return nil, nil, fmt.Errorf("watch channel overflow")
+			}
+		}
+	}
+
+	// Create stop function
+	stopFunc := func() {
+		w.Unsubscribe(id)
+	}
+
+	return ch, stopFunc, nil
+}
+
+// SubscribeWithID creates a new watch channel and returns the subscription ID.
+// Deprecated: Use Subscribe() which returns a stop function instead.
+// This method is kept for backward compatibility with existing code.
+func (w *Watcher) SubscribeWithID(sinceResourceVersion string) (<-chan WatchEvent, int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.closed {
+		return nil, 0, fmt.Errorf("watcher is closed")
+	}
 
 	id := w.nextID
 	w.nextID++
@@ -173,4 +232,25 @@ func (w *Watcher) Count() int {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	return len(w.subscribers)
+}
+
+// Close shuts down the watcher and all active subscriptions.
+// Implements EventBroadcaster interface.
+func (w *Watcher) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.closed {
+		return nil
+	}
+
+	w.closed = true
+
+	// Close all subscriber channels
+	for id, ch := range w.subscribers {
+		close(ch)
+		delete(w.subscribers, id)
+	}
+
+	return nil
 }
