@@ -1,12 +1,14 @@
-package storage
+package postgres
 
 import (
 	"context"
 	"fmt"
 	"sync"
+
+	"github.com/thetechnick/orlop/pkg/apiserver/storage"
 )
 
-// ExternalDBBroadcaster is an example implementation of EventBroadcaster
+// ExternalDBBroadcaster is an example implementation of storage.EventBroadcaster
 // that uses an external database's change stream (like MongoDB change streams,
 // PostgreSQL LISTEN/NOTIFY, or similar mechanisms).
 //
@@ -14,7 +16,7 @@ import (
 // event sources. Real implementations would connect to actual databases.
 type ExternalDBBroadcaster struct {
 	mu          sync.RWMutex
-	subscribers map[int]chan WatchEvent
+	subscribers map[int]chan storage.WatchEvent
 	nextID      int
 	closed      bool
 	ctx         context.Context
@@ -35,7 +37,7 @@ func NewExternalDBBroadcaster(dbConnection interface{}) *ExternalDBBroadcaster {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	b := &ExternalDBBroadcaster{
-		subscribers:  make(map[int]chan WatchEvent),
+		subscribers:  make(map[int]chan storage.WatchEvent),
 		ctx:          ctx,
 		cancel:       cancel,
 		dbConnection: dbConnection,
@@ -78,7 +80,7 @@ func (b *ExternalDBBroadcaster) listenToDatabase() {
 
 // Broadcast sends an event to all active subscribers.
 // This method is typically called by the database listener goroutine.
-func (b *ExternalDBBroadcaster) Broadcast(event WatchEvent) {
+func (b *ExternalDBBroadcaster) Broadcast(event storage.WatchEvent) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -99,7 +101,7 @@ func (b *ExternalDBBroadcaster) Broadcast(event WatchEvent) {
 
 // Subscribe creates a new watch starting from the given resource version.
 // For external databases, this might query historical events first.
-func (b *ExternalDBBroadcaster) Subscribe(sinceResourceVersion string) (<-chan WatchEvent, func(), error) {
+func (b *ExternalDBBroadcaster) Subscribe(sinceResourceVersion string) (<-chan storage.WatchEvent, func(), error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -110,7 +112,7 @@ func (b *ExternalDBBroadcaster) Subscribe(sinceResourceVersion string) (<-chan W
 	id := b.nextID
 	b.nextID++
 
-	ch := make(chan WatchEvent, 100)
+	ch := make(chan storage.WatchEvent, 100)
 	b.subscribers[id] = ch
 
 	// In a real implementation, query database for historical events
@@ -172,13 +174,13 @@ func (b *ExternalDBBroadcaster) Close() error {
 	return nil
 }
 
-// Verify that ExternalDBBroadcaster implements EventBroadcaster.
-var _ EventBroadcaster = (*ExternalDBBroadcaster)(nil)
+// Verify that ExternalDBBroadcaster implements storage.EventBroadcaster.
+var _ storage.EventBroadcaster = (*ExternalDBBroadcaster)(nil)
 
 // Example factory functions for different database backends:
 
 // NewMongoDBBroadcaster creates a broadcaster using MongoDB change streams.
-// func NewMongoDBBroadcaster(client *mongo.Client, database, collection string) EventBroadcaster {
+// func NewMongoDBBroadcaster(client *mongo.Client, database, collection string) storage.EventBroadcaster {
 //     // Real implementation would:
 //     // 1. Get collection: coll := client.Database(database).Collection(collection)
 //     // 2. Create change stream: stream := coll.Watch(ctx, pipeline)
@@ -186,8 +188,8 @@ var _ EventBroadcaster = (*ExternalDBBroadcaster)(nil)
 //     return NewExternalDBBroadcaster(client)
 // }
 
-// NewPostgreSQLBroadcaster creates a broadcaster using PostgreSQL LISTEN/NOTIFY.
-// func NewPostgreSQLBroadcaster(connString string) EventBroadcaster {
+// NewPostgrePostgresBroadcaster creates a broadcaster using PostgreSQL LISTEN/NOTIFY.
+// func NewPostgrePostgresBroadcaster(connString string) storage.EventBroadcaster {
 //     // Real implementation would:
 //     // 1. Connect: conn := pgx.Connect(ctx, connString)
 //     // 2. Execute: conn.Exec("LISTEN resource_changes")
@@ -196,7 +198,7 @@ var _ EventBroadcaster = (*ExternalDBBroadcaster)(nil)
 // }
 
 // NewNATSBroadcaster creates a broadcaster using NATS messaging.
-// func NewNATSBroadcaster(url, subject string) EventBroadcaster {
+// func NewNATSBroadcaster(url, subject string) storage.EventBroadcaster {
 //     // Real implementation would:
 //     // 1. Connect: nc := nats.Connect(url)
 //     // 2. Subscribe: nc.Subscribe(subject, handler)

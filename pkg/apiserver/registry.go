@@ -7,6 +7,7 @@ import (
 	"github.com/thetechnick/orlop/pkg/apiserver/handlers"
 	pkgschema "github.com/thetechnick/orlop/pkg/apiserver/schema"
 	"github.com/thetechnick/orlop/pkg/apiserver/storage"
+	"github.com/thetechnick/orlop/pkg/apiserver/storage/memory"
 	"github.com/thetechnick/orlop/pkg/apiserver/types"
 	apiext "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -38,7 +39,7 @@ func NewResourceRegistry(scheme *runtime.Scheme) *ResourceRegistry {
 func (r *ResourceRegistry) Register(info ResourceInfo) {
 	r.resources = append(r.resources, info)
 	// Create store for this resource
-	r.stores[info.Plural] = storage.NewMemoryStore(info.Plural, r.scheme, info.GVK)
+	r.stores[info.Plural] = memory.NewMemoryStore(info.Plural, r.scheme, info.GVK)
 }
 
 // GetStore returns the store for a given resource plural name.

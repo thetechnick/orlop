@@ -1,10 +1,11 @@
-package storage
+package memory
 
 import (
 	"fmt"
 	"sync"
 	"sync/atomic"
 
+	"github.com/thetechnick/orlop/pkg/apiserver/storage"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/labels"
@@ -16,16 +17,16 @@ import (
 // MemoryStoreOption configures a MemoryStore during creation.
 type MemoryStoreOption func(*MemoryStore)
 
-// WithBroadcaster sets a custom EventBroadcaster for the store.
+// WithBroadcaster sets a custom storage.EventBroadcaster for the store.
 // If not provided, defaults to in-memory Watcher.
-func WithBroadcaster(broadcaster EventBroadcaster) MemoryStoreOption {
+func WithBroadcaster(broadcaster storage.EventBroadcaster) MemoryStoreOption {
 	return func(s *MemoryStore) {
 		s.broadcaster = broadcaster
 	}
 }
 
-// WithBroadcasterFactory sets a factory function to create the EventBroadcaster.
-func WithBroadcasterFactory(factory EventBroadcasterFactory) MemoryStoreOption {
+// WithBroadcasterFactory sets a factory function to create the storage.EventBroadcaster.
+func WithBroadcasterFactory(factory storage.EventBroadcasterFactory) MemoryStoreOption {
 	return func(s *MemoryStore) {
 		s.broadcaster = factory()
 	}
@@ -71,7 +72,7 @@ type MemoryStore struct {
 	scheme                 *runtime.Scheme          // For creating list objects
 	gvk                    schema.GroupVersionKind  // For list metadata
 	resourceVersionCounter atomic.Int64             // Per-resource version counter
-	broadcaster            EventBroadcaster         // Pluggable event broadcaster
+	broadcaster            storage.EventBroadcaster         // Pluggable event broadcaster
 }
 
 // Create creates a new resource.
@@ -98,7 +99,7 @@ func (s *MemoryStore) Create(obj client.Object) error {
 
 	// Broadcast watch event
 	watcher := s.broadcaster
-	watcher.Broadcast(WatchEvent{
+	watcher.Broadcast(storage.WatchEvent{
 		Type:            "ADDED",
 		Object:          obj.DeepCopyObject().(client.Object),
 		ResourceVersion: fmt.Sprintf("%d", newVersion),
@@ -217,7 +218,7 @@ func (s *MemoryStore) Update(obj client.Object) error {
 
 	// Broadcast watch event
 	watcher := s.broadcaster
-	watcher.Broadcast(WatchEvent{
+	watcher.Broadcast(storage.WatchEvent{
 		Type:            "MODIFIED",
 		Object:          obj.DeepCopyObject().(client.Object),
 		ResourceVersion: fmt.Sprintf("%d", newVersion),
@@ -242,7 +243,7 @@ func (s *MemoryStore) Delete(namespace, name string) error {
 
 	// Broadcast watch event (use current RV since delete doesn't change it)
 	watcher := s.broadcaster
-	watcher.Broadcast(WatchEvent{
+	watcher.Broadcast(storage.WatchEvent{
 		Type:            "DELETED",
 		Object:          obj.DeepCopyObject().(client.Object),
 		ResourceVersion: s.currentResourceVersion(),
@@ -285,7 +286,7 @@ func (s *MemoryStore) setResourceVersion(obj runtime.Object, version int64) erro
 }
 
 // Watch starts watching for changes starting from the given resource version.
-func (s *MemoryStore) Watch(opts client.ListOptions, resourceVersion string) (<-chan WatchEvent, func(), error) {
+func (s *MemoryStore) Watch(opts client.ListOptions, resourceVersion string) (<-chan storage.WatchEvent, func(), error) {
 	watcher := s.broadcaster
 
 	// Subscribe to watch events
@@ -295,7 +296,7 @@ func (s *MemoryStore) Watch(opts client.ListOptions, resourceVersion string) (<-
 	}
 
 	// Create filtered output channel
-	outCh := make(chan WatchEvent, 100)
+	outCh := make(chan storage.WatchEvent, 100)
 	stopCh := make(chan struct{})
 
 	// Start filtering goroutine
