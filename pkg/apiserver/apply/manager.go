@@ -131,6 +131,7 @@ func (m *Manager) applyCreate(applyObj *unstructured.Unstructured, fieldManager 
 		Operation:  metav1.ManagedFieldsOperationApply,
 		APIVersion: m.gvk.GroupVersion().String(),
 		Time:       &now,
+		FieldsType: "FieldsV1",
 	}
 
 	// Use field manager to track all fields
