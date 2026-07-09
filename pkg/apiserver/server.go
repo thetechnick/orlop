@@ -31,6 +31,7 @@ type Options struct {
 	PublicResources  []ResourceInfo
 	PrivateScheme    *runtime.Scheme
 	PublicScheme     *runtime.Scheme
+	StorageFactory   StorageFactory // Optional: custom storage factory (defaults to in-memory)
 }
 
 // New creates a new API server with the given options.
@@ -44,10 +45,17 @@ func New(opts Options) (*Server, error) {
 	}
 
 	// Create private API registry with scheme
-	// Registry will create stores for each registered resource
-	privateRegistry := NewResourceRegistry(opts.PrivateScheme)
+	// Registry will create stores for each registered resource using the configured storage factory
+	var registryOpts []RegistryOption
+	if opts.StorageFactory != nil {
+		registryOpts = append(registryOpts, WithStorageFactory(opts.StorageFactory))
+	}
+
+	privateRegistry := NewResourceRegistry(opts.PrivateScheme, registryOpts...)
 	for _, res := range opts.PrivateResources {
-		privateRegistry.Register(res)
+		if err := privateRegistry.Register(res); err != nil {
+			return nil, fmt.Errorf("failed to register private resource %s: %w", res.Plural, err)
+		}
 	}
 
 	privateRouter, err := setupRouter(privateRegistry, opts.CORSOrigins)
@@ -76,9 +84,12 @@ func New(opts Options) (*Server, error) {
 		}
 
 		// Public API uses separate scheme for type definitions but shares stores with private API
-		publicRegistry := NewResourceRegistry(opts.PublicScheme)
+		// Use the same storage factory as private API
+		publicRegistry := NewResourceRegistry(opts.PublicScheme, registryOpts...)
 		for _, res := range opts.PublicResources {
-			publicRegistry.Register(res)
+			if err := publicRegistry.Register(res); err != nil {
+				return nil, fmt.Errorf("failed to register public resource %s: %w", res.Plural, err)
+			}
 		}
 
 		converter := conversion.NewConverter(opts.PublicScheme, opts.PrivateScheme)

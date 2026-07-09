@@ -63,7 +63,9 @@ CREATE TABLE event_log (
 
 ## Usage
 
-### Basic Setup
+### Recommended: Use Storage Factory (API Server Integration)
+
+The easiest way to use PostgreSQL storage is via the storage factory pattern:
 
 ```go
 import (
@@ -71,7 +73,64 @@ import (
     "database/sql"
     
     _ "github.com/lib/pq"
-    "github.com/thetechnick/orlop/pkg/apiserver/storage"
+    "github.com/thetechnick/orlop/pkg/apiserver"
+    "github.com/thetechnick/orlop/pkg/apiserver/storage/postgres"
+)
+
+func main() {
+    // Connect to PostgreSQL
+    db, err := sql.Open("postgres", 
+        "postgres://user:pass@localhost/orlop?sslmode=disable")
+    if err != nil {
+        panic(err)
+    }
+    defer db.Close()
+
+    // Create PostgreSQL storage factory
+    storageFactory := postgres.NewStorageFactory(postgres.StorageFactoryConfig{
+        DB:         db,
+        ConnString: "postgres://user:pass@localhost/orlop?sslmode=disable",
+        Context:    context.Background(),
+    })
+
+    // Create API server with PostgreSQL storage
+    server, err := apiserver.New(apiserver.Options{
+        Address:          "0.0.0.0",
+        PrivatePort:      8080,
+        PublicPort:       8081,
+        EnablePublicAPI:  true,
+        PrivateScheme:    privateScheme,
+        PublicScheme:     publicScheme,
+        PrivateResources: privateResources,
+        PublicResources:  publicResources,
+        StorageFactory:   storageFactory, // Use PostgreSQL storage
+    })
+    if err != nil {
+        panic(err)
+    }
+
+    if err := server.Run(); err != nil {
+        panic(err)
+    }
+}
+```
+
+The storage factory automatically creates:
+- A PostgresStore for each resource type
+- A PostgresBroadcaster for each resource type with LISTEN/NOTIFY
+- Proper table names and channel names per resource
+
+### Manual Setup (Advanced)
+
+For manual control over store and broadcaster creation:
+
+```go
+import (
+    "context"
+    "database/sql"
+    
+    _ "github.com/lib/pq"
+    "github.com/thetechnick/orlop/pkg/apiserver/storage/postgres"
 )
 
 func main() {
@@ -85,13 +144,15 @@ func main() {
 
     ctx := context.Background()
 
-    // Create SQL broadcaster
-    broadcaster, err := storage.NewPostgresBroadcaster(ctx, 
-        storage.SQLBroadcasterConfig{
+    // Create PostgreSQL broadcaster
+    broadcaster, err := postgres.NewPostgresBroadcaster(ctx, 
+        postgres.PostgresBroadcasterConfig{
             DB:          db,
             ConnString:  "postgres://user:pass@localhost/orlop?sslmode=disable",
             ChannelName: "resource_events",
             TableName:   "event_log",
+            Scheme:      scheme,
+            GVK:         gvk,
         })
     if err != nil {
         panic(err)

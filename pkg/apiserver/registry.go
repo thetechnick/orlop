@@ -13,33 +13,68 @@ import (
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
 	"k8s.io/apimachinery/pkg/runtime"
+	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/yaml"
 )
 
 // ResourceInfo is re-exported from types package for convenience.
 type ResourceInfo = types.ResourceInfo
 
+// StorageFactory is a function that creates a storage.ResourceStore for a given resource.
+// This allows custom storage backends (PostgreSQL, etc.) to be used instead of the default memory store.
+type StorageFactory func(resourceType string, scheme *runtime.Scheme, gvk runtimeschema.GroupVersionKind) (storage.ResourceStore, error)
+
 // ResourceRegistry manages API resource registrations and their stores.
 type ResourceRegistry struct {
-	resources []ResourceInfo
-	stores    map[string]storage.ResourceStore
-	scheme    *runtime.Scheme
+	resources      []ResourceInfo
+	stores         map[string]storage.ResourceStore
+	scheme         *runtime.Scheme
+	storageFactory StorageFactory
 }
 
-// NewResourceRegistry creates a new resource registry.
-func NewResourceRegistry(scheme *runtime.Scheme) *ResourceRegistry {
-	return &ResourceRegistry{
-		resources: []ResourceInfo{},
-		stores:    make(map[string]storage.ResourceStore),
-		scheme:    scheme,
+// RegistryOption configures a ResourceRegistry.
+type RegistryOption func(*ResourceRegistry)
+
+// WithStorageFactory configures a custom storage factory.
+// If not provided, the default in-memory storage is used.
+func WithStorageFactory(factory StorageFactory) RegistryOption {
+	return func(r *ResourceRegistry) {
+		r.storageFactory = factory
 	}
 }
 
-// Register adds a resource to the registry and creates its store.
-func (r *ResourceRegistry) Register(info ResourceInfo) {
+// NewResourceRegistry creates a new resource registry.
+func NewResourceRegistry(scheme *runtime.Scheme, opts ...RegistryOption) *ResourceRegistry {
+	r := &ResourceRegistry{
+		resources: []ResourceInfo{},
+		stores:    make(map[string]storage.ResourceStore),
+		scheme:    scheme,
+		// Default to in-memory storage
+		storageFactory: func(resourceType string, scheme *runtime.Scheme, gvk runtimeschema.GroupVersionKind) (storage.ResourceStore, error) {
+			return memory.NewMemoryStore(resourceType, scheme, gvk), nil
+		},
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		opt(r)
+	}
+
+	return r
+}
+
+// Register adds a resource to the registry and creates its store using the configured storage factory.
+func (r *ResourceRegistry) Register(info ResourceInfo) error {
 	r.resources = append(r.resources, info)
-	// Create store for this resource
-	r.stores[info.Plural] = memory.NewMemoryStore(info.Plural, r.scheme, info.GVK)
+
+	// Create store using the storage factory
+	store, err := r.storageFactory(info.Plural, r.scheme, info.GVK)
+	if err != nil {
+		return fmt.Errorf("failed to create storage for %s: %w", info.Plural, err)
+	}
+
+	r.stores[info.Plural] = store
+	return nil
 }
 
 // GetStore returns the store for a given resource plural name.

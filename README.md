@@ -406,8 +406,53 @@ The `pkg/apiserver/conversion` package handles bidirectional conversion:
 ### Storage
 
 - **Interface**: Abstract storage interface for pluggable backends
-- **MemoryStore**: In-memory implementation with thread-safe operations
+- **MemoryStore**: In-memory implementation with thread-safe operations (default)
+- **PostgresStore**: PostgreSQL-backed persistent storage with multi-instance support
+- **Custom Storage**: Pluggable storage via custom factory functions
 - ResourceVersion tracking and optimistic concurrency control
+
+#### Storage Backends
+
+**In-Memory (Default):**
+```go
+server, err := apiserver.New(apiserver.Options{
+    PrivateScheme:    privateScheme,
+    PrivateResources: resources,
+    // No StorageFactory specified - uses in-memory by default
+})
+```
+
+**PostgreSQL:**
+```go
+import "github.com/thetechnick/orlop/pkg/apiserver/storage/postgres"
+
+db, _ := sql.Open("postgres", "postgres://localhost/orlop")
+storageFactory := postgres.NewStorageFactory(postgres.StorageFactoryConfig{
+    DB:         db,
+    ConnString: "postgres://localhost/orlop",
+})
+
+server, err := apiserver.New(apiserver.Options{
+    PrivateScheme:    privateScheme,
+    PrivateResources: resources,
+    StorageFactory:   storageFactory, // Use PostgreSQL
+})
+```
+
+**Custom Storage:**
+```go
+customFactory := func(resourceType string, scheme *runtime.Scheme, gvk schema.GroupVersionKind) (storage.ResourceStore, error) {
+    return myCustomStore, nil
+}
+
+server, err := apiserver.New(apiserver.Options{
+    PrivateScheme:    privateScheme,
+    PrivateResources: resources,
+    StorageFactory:   customFactory,
+})
+```
+
+See [pkg/apiserver/storage/postgres/README.md](./pkg/apiserver/storage/postgres/README.md) for PostgreSQL storage details
 
 ### Registry System
 
