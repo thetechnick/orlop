@@ -43,7 +43,7 @@ func NewGenerator(inputDir, outputDir string) (*Generator, error) {
 		publicTypes:     make(map[string]bool),
 		referencedTypes: make(map[string]bool),
 		modulePath:      modulePath,
-		typesImportPath: modulePath + "/pkg/apiserver/types",
+		typesImportPath: "github.com/thetechnick/orlop/pkg/apiserver/types",
 		inputBasePath:   modulePath + "/" + inputDir,
 		outputBasePath:  modulePath + "/" + outputDir,
 	}, nil
