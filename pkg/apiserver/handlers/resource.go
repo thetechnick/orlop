@@ -219,6 +219,9 @@ func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, op
 	// Get resourceVersion to start from
 	resourceVersion := r.URL.Query().Get("resourceVersion")
 
+	// Check if client wants BOOKMARK events
+	allowWatchBookmarks := r.URL.Query().Get("allowWatchBookmarks") == "true"
+
 	// Start watch
 	eventCh, stop, err := h.store.Watch(opts, resourceVersion)
 	if err != nil {
@@ -242,16 +245,62 @@ func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, op
 	// This allows the client's Do() to return before we start streaming events
 	flusher.Flush()
 
+	// Set up BOOKMARK ticker if requested
+	var bookmarkTicker *time.Ticker
+	var bookmarkCh <-chan time.Time
+	if allowWatchBookmarks {
+		// Send BOOKMARK events every 30 seconds
+		bookmarkTicker = time.NewTicker(30 * time.Second)
+		bookmarkCh = bookmarkTicker.C
+		defer bookmarkTicker.Stop()
+	}
+
+	// Track last resource version for BOOKMARK events
+	// If no initial resource version, get current from store
+	lastResourceVersion := resourceVersion
+	if lastResourceVersion == "" {
+		// Get current list to obtain resource version
+		list, err := h.store.List(opts)
+		if err == nil {
+			lastResourceVersion = list.GetResourceVersion()
+		} else {
+			lastResourceVersion = "0"
+		}
+	}
+
 	// Stream events
 	encoder := json.NewEncoder(w)
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-bookmarkCh:
+			// Send BOOKMARK event with current resource version
+			// Create a minimal object with just metadata
+			bookmarkObj := map[string]interface{}{
+				"apiVersion": h.gvk.GroupVersion().String(),
+				"kind":       h.gvk.Kind,
+				"metadata": map[string]interface{}{
+					"resourceVersion": lastResourceVersion,
+				},
+			}
+			watchEvent := map[string]interface{}{
+				"type":   "BOOKMARK",
+				"object": bookmarkObj,
+			}
+
+			if err := encoder.Encode(watchEvent); err != nil {
+				return
+			}
+			flusher.Flush()
+
 		case event, ok := <-eventCh:
 			if !ok {
 				return
 			}
+
+			// Update last resource version
+			lastResourceVersion = event.ResourceVersion
 
 			// Send watch event
 			watchEvent := map[string]interface{}{

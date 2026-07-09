@@ -1024,6 +1024,189 @@ func TestDiscoveryOpenAPIV2(t *testing.T) {
 	}
 }
 
+func TestWatchBookmarks(t *testing.T) {
+	namespace := "default"
+
+	// Start a watch request with allowWatchBookmarks=true
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	defer cancel()
+
+	watchURL := fmt.Sprintf("%s/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects?watch=true&allowWatchBookmarks=true", baseURL, namespace)
+
+	watchReq, err := http.NewRequestWithContext(ctx, "GET", watchURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to create watch request: %v", err)
+	}
+
+	client := &http.Client{}
+
+	type respResult struct {
+		resp *http.Response
+		err  error
+	}
+	respCh := make(chan respResult, 1)
+
+	go func() {
+		resp, err := client.Do(watchReq)
+		respCh <- respResult{resp, err}
+	}()
+
+	var watchResp *http.Response
+	select {
+	case result := <-respCh:
+		if result.err != nil {
+			t.Fatalf("Failed to start watch: %v", result.err)
+		}
+		watchResp = result.resp
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for watch connection")
+	}
+	defer watchResp.Body.Close()
+
+	if watchResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(watchResp.Body)
+		t.Fatalf("Expected status 200 for watch, got %d: %s", watchResp.StatusCode, body)
+	}
+
+	// Channel to collect watch events
+	events := make(chan map[string]interface{}, 10)
+	watchDone := make(chan struct{})
+
+	// Start reading watch events
+	go func() {
+		defer close(watchDone)
+		decoder := json.NewDecoder(watchResp.Body)
+		for {
+			var event map[string]interface{}
+			if err := decoder.Decode(&event); err != nil {
+				return
+			}
+			events <- event
+		}
+	}()
+
+	// Give watch time to establish
+	time.Sleep(100 * time.Millisecond)
+
+	// Wait for at least 31 seconds to get a BOOKMARK event (they're sent every 30s)
+	bookmarkReceived := false
+	timeout := time.After(32 * time.Second)
+
+waitLoop:
+	for {
+		select {
+		case event := <-events:
+			if event["type"] == "BOOKMARK" {
+				t.Logf("Received BOOKMARK event: %+v", event)
+				bookmarkReceived = true
+
+				// Verify BOOKMARK event structure
+				obj := event["object"].(map[string]interface{})
+				if obj["apiVersion"] == nil {
+					t.Error("BOOKMARK event missing apiVersion")
+				}
+				if obj["kind"] == nil {
+					t.Error("BOOKMARK event missing kind")
+				}
+				metadata := obj["metadata"].(map[string]interface{})
+				if metadata["resourceVersion"] == nil {
+					t.Error("BOOKMARK event missing resourceVersion")
+				}
+				break waitLoop
+			}
+		case <-timeout:
+			break waitLoop
+		}
+	}
+
+	if !bookmarkReceived {
+		t.Error("Expected to receive at least one BOOKMARK event within 32 seconds")
+	}
+}
+
+func TestWatchWithoutBookmarks(t *testing.T) {
+	namespace := "default"
+
+	// Start a watch request WITHOUT allowWatchBookmarks (default behavior)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	watchURL := fmt.Sprintf("%s/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects?watch=true", baseURL, namespace)
+
+	watchReq, err := http.NewRequestWithContext(ctx, "GET", watchURL, nil)
+	if err != nil {
+		t.Fatalf("Failed to create watch request: %v", err)
+	}
+
+	client := &http.Client{}
+
+	type respResult struct {
+		resp *http.Response
+		err  error
+	}
+	respCh := make(chan respResult, 1)
+
+	go func() {
+		resp, err := client.Do(watchReq)
+		respCh <- respResult{resp, err}
+	}()
+
+	var watchResp *http.Response
+	select {
+	case result := <-respCh:
+		if result.err != nil {
+			t.Fatalf("Failed to start watch: %v", result.err)
+		}
+		watchResp = result.resp
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for watch connection")
+	}
+	defer watchResp.Body.Close()
+
+	if watchResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(watchResp.Body)
+		t.Fatalf("Expected status 200 for watch, got %d: %s", watchResp.StatusCode, body)
+	}
+
+	// Channel to collect watch events
+	events := make(chan map[string]interface{}, 10)
+	watchDone := make(chan struct{})
+
+	// Start reading watch events
+	go func() {
+		defer close(watchDone)
+		decoder := json.NewDecoder(watchResp.Body)
+		for {
+			var event map[string]interface{}
+			if err := decoder.Decode(&event); err != nil {
+				return
+			}
+			events <- event
+		}
+	}()
+
+	// Wait for 2 seconds to make sure no BOOKMARK events are sent
+	bookmarkReceived := false
+	timeout := time.After(2 * time.Second)
+
+waitLoop:
+	for {
+		select {
+		case event := <-events:
+			if event["type"] == "BOOKMARK" {
+				bookmarkReceived = true
+				break waitLoop
+			}
+		case <-timeout:
+			break waitLoop
+		}
+	}
+
+	if bookmarkReceived {
+		t.Error("Should NOT receive BOOKMARK events when allowWatchBookmarks is not set")
+	}
+}
+
 func TestWatch(t *testing.T) {
 	namespace := "default"
 
