@@ -2,8 +2,8 @@ package apiserver
 
 import (
 	"fmt"
-	"log"
 
+	"github.com/go-logr/logr"
 	"github.com/thetechnick/orlop/pkg/apiserver/apply"
 	"github.com/thetechnick/orlop/pkg/apiserver/conversion"
 	"github.com/thetechnick/orlop/pkg/apiserver/handlers"
@@ -32,6 +32,7 @@ type ResourceRegistry struct {
 	stores         map[string]storage.ResourceStore
 	scheme         *runtime.Scheme
 	storageFactory StorageFactory
+	logger         logr.Logger
 }
 
 // RegistryOption configures a ResourceRegistry.
@@ -42,6 +43,14 @@ type RegistryOption func(*ResourceRegistry)
 func WithStorageFactory(factory StorageFactory) RegistryOption {
 	return func(r *ResourceRegistry) {
 		r.storageFactory = factory
+	}
+}
+
+// WithLogger configures a logger for the registry.
+// If not provided, a discard logger is used.
+func WithLogger(logger logr.Logger) RegistryOption {
+	return func(r *ResourceRegistry) {
+		r.logger = logger
 	}
 }
 
@@ -120,19 +129,20 @@ func (r *ResourceRegistry) CreateHandler(info ResourceInfo) (*handlers.ResourceH
 		info.GVK,
 		info.Plural,
 		r.scheme,
+		r.logger.WithValues("resource", info.Plural),
 	)
 
 	// Create and set apply manager for server-side apply support
 	structural, err := schema.NewStructural(processor.GetValidationSchema())
 	if err != nil {
-		log.Printf("Warning: failed to create structural schema for %s, server-side apply disabled: %v", info.Plural, err)
+		r.logger.Info("Failed to create structural schema, server-side apply disabled", "resource", info.Plural, "error", err)
 	} else {
 		applyMgr, err := apply.NewManager(r.scheme, structural, info.GVK)
 		if err != nil {
-			log.Printf("Warning: failed to create apply manager for %s, server-side apply disabled: %v", info.Plural, err)
+			r.logger.Info("Failed to create apply manager, server-side apply disabled", "resource", info.Plural, "error", err)
 		} else {
 			handler.SetApplyManager(applyMgr)
-			log.Printf("Server-side apply enabled for %s", info.Plural)
+			r.logger.Info("Server-side apply enabled", "resource", info.Plural)
 		}
 	}
 
@@ -162,6 +172,7 @@ func (r *ResourceRegistry) CreateConvertingHandler(converter interface{}, privat
 		info.Plural,
 		r.scheme,      // Public scheme from registry
 		privateScheme, // Private scheme passed in
+		r.logger.WithValues("resource", info.Plural),
 	)
 
 	return handler, nil

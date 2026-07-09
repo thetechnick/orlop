@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-logr/logr"
 	"github.com/google/uuid"
 	"github.com/thetechnick/orlop/pkg/apiserver/apply"
 	"github.com/thetechnick/orlop/pkg/apiserver/schema"
@@ -31,6 +31,7 @@ type ResourceHandler struct {
 	resourceType string
 	scheme       *runtime.Scheme
 	applyManager *apply.Manager // Optional: for server-side apply support
+	logger       logr.Logger
 }
 
 // NewResourceHandler creates a new resource handler.
@@ -40,7 +41,11 @@ func NewResourceHandler(
 	gvk runtimeschema.GroupVersionKind,
 	resourceType string,
 	scheme *runtime.Scheme,
+	logger logr.Logger,
 ) *ResourceHandler {
+	if logger.GetSink() == nil {
+		logger = logr.Discard()
+	}
 	return &ResourceHandler{
 		store:        store,
 		processor:    processor,
@@ -48,6 +53,7 @@ func NewResourceHandler(
 		resourceType: resourceType,
 		scheme:       scheme,
 		applyManager: nil, // Will be set by SetApplyManager if SSA is enabled
+		logger:       logger,
 	}
 }
 
@@ -59,7 +65,7 @@ func (h *ResourceHandler) SetApplyManager(applyMgr *apply.Manager) {
 // Create handles POST requests to create a new resource.
 func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
-	log.Printf("[CREATE] %s namespace=%s", h.gvk.Kind, namespace)
+	h.logger.V(1).Info("Create request", "kind", h.gvk.Kind, "namespace", namespace)
 
 	// Parse request body as map for schema processing
 	var objMap map[string]interface{}
@@ -110,7 +116,7 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Store object
 	if err := h.store.Create(clientObj); err != nil {
-		log.Printf("[CREATE] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
+		h.logger.Error(err, "Create failed", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 		if errors.IsAlreadyExists(err) {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
@@ -119,7 +125,7 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[CREATE] %s namespace=%s name=%s status=created", h.gvk.Kind, namespace, name)
+	h.logger.Info("Created", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Return created object
 	w.Header().Set("Content-Type", "application/json")
@@ -131,11 +137,11 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *ResourceHandler) Get(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
-	log.Printf("[GET] %s namespace=%s name=%s", h.gvk.Kind, namespace, name)
+	h.logger.V(1).Info("Get request", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	obj, err := h.store.Get(namespace, name)
 	if err != nil {
-		log.Printf("[GET] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
+		h.logger.Error(err, "Get failed", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
@@ -144,7 +150,7 @@ func (h *ResourceHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[GET] %s namespace=%s name=%s status=found", h.gvk.Kind, namespace, name)
+	h.logger.V(1).Info("Found", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -155,9 +161,9 @@ func (h *ResourceHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	if namespace == "" {
-		log.Printf("[LIST] %s scope=cluster", h.gvk.Kind)
+		h.logger.V(1).Info("List request", "kind", h.gvk.Kind, "scope", "cluster")
 	} else {
-		log.Printf("[LIST] %s namespace=%s", h.gvk.Kind, namespace)
+		h.logger.V(1).Info("List request", "kind", h.gvk.Kind, "namespace", namespace)
 	}
 
 	// Build list options from query parameters
@@ -170,9 +176,9 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 		selector, err := labels.Parse(labelSelectorStr)
 		if err != nil {
 			if namespace == "" {
-				log.Printf("[LIST] %s scope=cluster error=invalid-label-selector", h.gvk.Kind)
+				h.logger.Info("Invalid label selector", "kind", h.gvk.Kind, "scope", "cluster")
 			} else {
-				log.Printf("[LIST] %s namespace=%s error=invalid-label-selector", h.gvk.Kind, namespace)
+				h.logger.Info("Invalid label selector", "kind", h.gvk.Kind, "namespace", namespace)
 			}
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid label selector: %v", err))
 			return
@@ -183,9 +189,9 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	// Check if this is a watch request
 	if r.URL.Query().Get("watch") == "true" {
 		if namespace == "" {
-			log.Printf("[WATCH] %s scope=cluster uri=%s", h.gvk.Kind, r.RequestURI)
+			h.logger.V(1).Info("Watch request", "kind", h.gvk.Kind, "scope", "cluster", "uri", r.RequestURI)
 		} else {
-			log.Printf("[WATCH] %s namespace=%s uri=%s", h.gvk.Kind, namespace, r.RequestURI)
+			h.logger.V(1).Info("Watch request", "kind", h.gvk.Kind, "namespace", namespace, "uri", r.RequestURI)
 		}
 		h.handleWatch(w, r, opts)
 		return
@@ -194,9 +200,9 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	list, err := h.store.List(opts)
 	if err != nil {
 		if namespace == "" {
-			log.Printf("[LIST] %s scope=cluster error=%v", h.gvk.Kind, err)
+			h.logger.Error(err, "List failed", "kind", h.gvk.Kind, "scope", "cluster")
 		} else {
-			log.Printf("[LIST] %s namespace=%s error=%v", h.gvk.Kind, namespace, err)
+			h.logger.Error(err, "List failed", "kind", h.gvk.Kind, "namespace", namespace)
 		}
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list objects: %v", err))
 		return
@@ -212,9 +218,9 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 		count = len(items)
 	}
 	if namespace == "" {
-		log.Printf("[LIST] %s scope=cluster count=%d", h.gvk.Kind, count)
+		h.logger.V(1).Info("Listed", "kind", h.gvk.Kind, "scope", "cluster", "count", count)
 	} else {
-		log.Printf("[LIST] %s namespace=%s count=%d", h.gvk.Kind, namespace, count)
+		h.logger.V(1).Info("Listed", "kind", h.gvk.Kind, "namespace", namespace, "count", count)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -228,7 +234,7 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
-	log.Printf("[UPDATE] %s namespace=%s name=%s", h.gvk.Kind, namespace, name)
+	h.logger.V(1).Info("Update request", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Get existing object to compare spec
 	existing, err := h.store.Get(namespace, name)
@@ -290,7 +296,7 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Update object
 	if err := h.store.Update(clientObj); err != nil {
-		log.Printf("[UPDATE] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
+		h.logger.Error(err, "Update failed", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else if errors.IsConflict(err) {
@@ -301,7 +307,7 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[UPDATE] %s namespace=%s name=%s status=updated", h.gvk.Kind, namespace, name)
+	h.logger.Info("Updated", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Return updated object
 	w.Header().Set("Content-Type", "application/json")
@@ -317,7 +323,7 @@ func (h *ResourceHandler) ApplyPatch(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
 
-	log.Printf("[APPLY] %s namespace=%s name=%s", h.gvk.Kind, namespace, name)
+	h.logger.V(1).Info("Apply request", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Check if apply manager is available
 	if h.applyManager == nil {
@@ -384,7 +390,7 @@ func (h *ResourceHandler) ApplyPatch(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(result)
-		log.Printf("[APPLY-CREATE] %s/%s created via apply by %s", namespace, name, fieldManager)
+		h.logger.Info("Created via apply", "namespace", namespace, "name", name, "fieldManager", fieldManager)
 	} else {
 		// This is an update via apply
 		if err := h.store.Update(result); err != nil {
@@ -396,7 +402,7 @@ func (h *ResourceHandler) ApplyPatch(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(result)
-		log.Printf("[APPLY-UPDATE] %s/%s updated via apply by %s (force=%v)", namespace, name, fieldManager, force)
+		h.logger.Info("Updated via apply", "namespace", namespace, "name", name, "fieldManager", fieldManager, "force", force)
 	}
 }
 
@@ -404,10 +410,10 @@ func (h *ResourceHandler) ApplyPatch(w http.ResponseWriter, r *http.Request) {
 func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
-	log.Printf("[DELETE] %s namespace=%s name=%s", h.gvk.Kind, namespace, name)
+	h.logger.V(1).Info("Delete request", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	if err := h.store.Delete(namespace, name); err != nil {
-		log.Printf("[DELETE] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
+		h.logger.Error(err, "Delete failed", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
 		} else {
@@ -416,7 +422,7 @@ func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("[DELETE] %s namespace=%s name=%s status=deleted", h.gvk.Kind, namespace, name)
+	h.logger.Info("Deleted", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Return success status
 	status := metav1.Status{

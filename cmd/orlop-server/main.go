@@ -3,13 +3,15 @@ package main
 import (
 	"context"
 	"flag"
-	"log"
+	"fmt"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/go-logr/logr"
+	"github.com/go-logr/stdr"
 	"github.com/thetechnick/orlop/pkg/apiserver"
 )
 
@@ -28,6 +30,9 @@ func main() {
 	flag.BoolVar(&enablePublic, "enable-public-api", true, "enable public API server")
 	flag.StringVar(&corsOrigins, "cors-origins", "*", "comma-separated list of allowed CORS origins")
 	flag.Parse()
+
+	// Setup logger using standard library logger backend
+	logger := stdr.New(nil)
 
 	// Parse CORS origins
 	origins := []string{}
@@ -49,11 +54,13 @@ func main() {
 		PublicResources:  getPublicResources(),
 		PrivateScheme:    getPrivateScheme(),
 		PublicScheme:     getPublicScheme(),
+		Logger:           logger,
 	}
 
 	server, err := apiserver.New(opts)
 	if err != nil {
-		log.Fatalf("Failed to create server: %v", err)
+		fmt.Fprintf(os.Stderr, "Failed to create server: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Setup signal handling for graceful shutdown
@@ -63,21 +70,23 @@ func main() {
 	// Start server in goroutine
 	go func() {
 		if err := server.Run(); err != nil {
-			log.Fatalf("Server error: %v", err)
+			logger.Error(err, "Server error")
+			os.Exit(1)
 		}
 	}()
 
 	// Wait for signal
 	<-sigChan
-	log.Println("Shutting down server...")
+	logger.Info("Shutting down server")
 
 	// Graceful shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		log.Fatalf("Server shutdown error: %v", err)
+		logger.Error(err, "Server shutdown error")
+		os.Exit(1)
 	}
 
-	log.Println("Server stopped")
+	logger.Info("Server stopped")
 }

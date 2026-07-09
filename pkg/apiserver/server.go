@@ -3,10 +3,10 @@ package apiserver
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-logr/logr"
 	"github.com/thetechnick/orlop/pkg/apiserver/conversion"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -18,6 +18,7 @@ type Server struct {
 	privateServer *http.Server
 	publicServer  *http.Server
 	options       Options
+	logger        logr.Logger
 }
 
 // Options holds server configuration.
@@ -32,6 +33,7 @@ type Options struct {
 	PrivateScheme    *runtime.Scheme
 	PublicScheme     *runtime.Scheme
 	StorageFactory   StorageFactory // Optional: custom storage factory (defaults to in-memory)
+	Logger           logr.Logger    // Optional: logger for server operations (defaults to discard logger)
 }
 
 // New creates a new API server with the given options.
@@ -44,12 +46,19 @@ func New(opts Options) (*Server, error) {
 		return nil, fmt.Errorf("at least one private resource is required")
 	}
 
+	logger := opts.Logger
+	if logger.GetSink() == nil {
+		// Use a no-op logger if none provided
+		logger = logr.Discard()
+	}
+
 	// Create private API registry with scheme
 	// Registry will create stores for each registered resource using the configured storage factory
 	var registryOpts []RegistryOption
 	if opts.StorageFactory != nil {
 		registryOpts = append(registryOpts, WithStorageFactory(opts.StorageFactory))
 	}
+	registryOpts = append(registryOpts, WithLogger(logger))
 
 	privateRegistry := NewResourceRegistry(opts.PrivateScheme, registryOpts...)
 	for _, res := range opts.PrivateResources {
@@ -72,6 +81,7 @@ func New(opts Options) (*Server, error) {
 		privateRouter: privateRouter,
 		privateServer: privateServer,
 		options:       opts,
+		logger:        logger,
 	}
 
 	// Create public API if enabled
@@ -115,15 +125,15 @@ func New(opts Options) (*Server, error) {
 func (s *Server) Run() error {
 	// Start private API server in goroutine
 	go func() {
-		log.Printf("Private API server listening on %s", s.privateServer.Addr)
+		s.logger.Info("Private API server listening", "addr", s.privateServer.Addr)
 		if err := s.privateServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("Private API server error: %v", err)
+			s.logger.Error(err, "Private API server error")
 		}
 	}()
 
 	// Start public API server if enabled
 	if s.options.EnablePublicAPI && s.publicServer != nil {
-		log.Printf("Public API server listening on %s", s.publicServer.Addr)
+		s.logger.Info("Public API server listening", "addr", s.publicServer.Addr)
 		return s.publicServer.ListenAndServe()
 	}
 

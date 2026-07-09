@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -39,7 +38,7 @@ type watchContext struct {
 func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, opts client.ListOptions) {
 	params := h.parseWatchParams(r)
 	
-	log.Printf("[WATCH] allowWatchBookmarks=%v sendInitialEvents=%v resourceVersionMatch=%s timeoutSeconds=%s",
+	h.logger.V(1).Info("Watch parameters",
 		params.allowWatchBookmarks, params.sendInitialEvents, params.resourceVersionMatch, params.timeoutSeconds)
 
 	// Apply timeout if specified
@@ -168,7 +167,7 @@ func (h *ResourceHandler) sendInitialWatchEvents(wctx *watchContext, opts client
 	}
 
 	items, _ := meta.ExtractList(list)
-	log.Printf("[WATCH] Sending %d initial events", len(items))
+	h.logger.V(1).Info("Sending initial events", "count", len(items))
 
 	for _, item := range items {
 		watchEvent := map[string]interface{}{

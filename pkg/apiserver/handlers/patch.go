@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 
@@ -24,7 +23,7 @@ func (h *ResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
 	name := chi.URLParam(r, "name")
 	contentType := r.Header.Get("Content-Type")
-	log.Printf("[PATCH] %s namespace=%s name=%s content-type=%s", h.gvk.Kind, namespace, name, contentType)
+	h.logger.V(1).Info("Patch request", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "contentType", contentType)
 
 	// Check if this is a server-side apply request
 	if strings.HasPrefix(contentType, "application/apply-patch+") {
@@ -144,7 +143,7 @@ func (h *ResourceHandler) processPatchedObject(w http.ResponseWriter, namespace,
 		return
 	}
 
-	log.Printf("[PATCH] %s namespace=%s name=%s status=patched", h.gvk.Kind, namespace, name)
+	h.logger.Info("Patched", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Return updated object
 	w.Header().Set("Content-Type", "application/json")

@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -41,7 +40,7 @@ func NewDiscoveryHandler(provider ResourceProvider) *DiscoveryHandler {
 // APIGroupList handles GET /apis
 // Returns the list of API groups available.
 func (h *DiscoveryHandler) APIGroupList(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[DISCOVERY] GET /apis")
+	// Discovery: GET /apis
 	groups := make(map[string]*metav1.APIGroup)
 
 	// Collect unique groups and their versions
@@ -103,7 +102,7 @@ func (h *DiscoveryHandler) APIGroupList(w http.ResponseWriter, r *http.Request) 
 // APIGroup handles GET /apis/{group}
 // Returns the list of versions for a specific API group.
 func (h *DiscoveryHandler) APIGroup(w http.ResponseWriter, r *http.Request, group string) {
-	log.Printf("[DISCOVERY] GET /apis/%s", group)
+	// Discovery: GET /apis/{group}
 	apiGroup := &metav1.APIGroup{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "APIGroup",
@@ -144,7 +143,7 @@ func (h *DiscoveryHandler) APIGroup(w http.ResponseWriter, r *http.Request, grou
 // APIResourceList handles GET /apis/{group}/{version}
 // Returns the list of resources for a specific API group version.
 func (h *DiscoveryHandler) APIResourceList(w http.ResponseWriter, r *http.Request, group, version string) {
-	log.Printf("[DISCOVERY] GET /apis/%s/%s", group, version)
+	// Discovery: GET /apis/{group}/{version}
 	resourceList := &metav1.APIResourceList{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "APIResourceList",
@@ -193,7 +192,7 @@ func (h *DiscoveryHandler) APIResourceList(w http.ResponseWriter, r *http.Reques
 // OpenAPIV3 handles GET /openapi/v3
 // Returns the list of available OpenAPI v3 group versions.
 func (h *DiscoveryHandler) OpenAPIV3(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[DISCOVERY] GET /openapi/v3")
+	// Discovery: GET /openapi/v3
 	// Build a list of group versions
 	groupVersions := make(map[string]bool)
 	for _, res := range h.resources {
@@ -221,7 +220,7 @@ func (h *DiscoveryHandler) OpenAPIV3(w http.ResponseWriter, r *http.Request) {
 // OpenAPIV3GroupVersion handles GET /openapi/v3/apis/{group}/{version}
 // Returns the OpenAPI v3 schema for a specific group version.
 func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.Request, group, version string) {
-	log.Printf("[DISCOVERY] GET /openapi/v3/apis/%s/%s", group, version)
+	// Discovery: GET /openapi/v3/apis/{group}/{version}
 	gv := runtimeschema.GroupVersion{Group: group, Version: version}
 
 	// Build OpenAPI v3 document
@@ -718,7 +717,7 @@ func (h *DiscoveryHandler) buildOpenAPIV2Spec() *openapispec.Swagger {
 // OpenAPIV2 handles GET /openapi/v2
 // Returns the OpenAPI v2 (Swagger 2.0) specification in JSON or protobuf format.
 func (h *DiscoveryHandler) OpenAPIV2(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[DISCOVERY] GET /openapi/v2")
+	// Discovery: GET /openapi/v2
 	// Initialize the OpenAPI v2 spec and caches once (lazy initialization)
 	h.openAPIV2Once.Do(func() {
 		swagger := h.buildOpenAPIV2Spec()

@@ -32,6 +32,7 @@ func createConvertingHandlerWithSharedStore(publicRegistry *ResourceRegistry, pr
 		publicRes.Plural,
 		publicRegistry.scheme, // Public scheme
 		privateScheme,         // Private scheme
+		publicRegistry.logger.WithValues("resource", publicRes.Plural),
 	)
 
 	return handler, nil
