@@ -246,23 +246,16 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 		publicObjects = append(publicObjects, publicObj)
 	}
 
-	// Create list object
-	listGVK := h.gvk.GroupVersion().WithKind(h.gvk.Kind + "List")
-	publicListRaw, err := h.publicScheme.New(listGVK)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create list object: %v", err))
-		return
+	// Build list response manually as JSON to avoid type conversion issues
+	// meta.SetList() requires exact type matches which don't work across packages
+	listResponse := map[string]interface{}{
+		"apiVersion": h.gvk.GroupVersion().String(),
+		"kind":       h.gvk.Kind + "List",
+		"metadata": map[string]interface{}{
+			"resourceVersion": privateList.GetResourceVersion(),
+		},
+		"items": publicObjects,
 	}
-	publicList := publicListRaw.(client.ObjectList)
-
-	if err := meta.SetList(publicList, publicObjects); err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to set list items: %v", err))
-		return
-	}
-
-	// Set metadata and GVK
-	publicList.GetObjectKind().SetGroupVersionKind(listGVK)
-	publicList.SetResourceVersion(privateList.GetResourceVersion())
 
 	if namespace == "" {
 		log.Printf("[LIST-CONVERTING] %s scope=cluster count=%d", h.gvk.Kind, len(publicObjects))
@@ -272,7 +265,7 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(publicList)
+	json.NewEncoder(w).Encode(listResponse)
 }
 
 // handleWatch handles watch requests using streaming JSON.

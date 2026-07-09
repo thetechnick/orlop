@@ -75,14 +75,15 @@ func New(opts Options) (*Server, error) {
 			return nil, fmt.Errorf("public resources are required when EnablePublicAPI is true")
 		}
 
-		// Public API uses separate scheme and registry
+		// Public API uses separate scheme for type definitions but shares stores with private API
 		publicRegistry := NewResourceRegistry(opts.PublicScheme)
 		for _, res := range opts.PublicResources {
 			publicRegistry.Register(res)
 		}
 
-		converter := conversion.NewConverter()
-		publicRouter, err := setupConvertingRouter(publicRegistry, converter, opts.PrivateScheme, opts.CORSOrigins)
+		converter := conversion.NewConverter(opts.PublicScheme, opts.PrivateScheme)
+		// Pass private registry so converting handlers can access the shared stores
+		publicRouter, err := setupConvertingRouter(publicRegistry, privateRegistry, converter, opts.PrivateScheme, opts.CORSOrigins)
 		if err != nil {
 			return nil, fmt.Errorf("failed to setup public router: %w", err)
 		}

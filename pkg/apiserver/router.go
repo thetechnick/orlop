@@ -101,7 +101,9 @@ func setupRouter(registry *ResourceRegistry, corsOrigins []string) (chi.Router, 
 }
 
 // setupConvertingRouter configures the HTTP router with converting handlers for public API.
-func setupConvertingRouter(registry *ResourceRegistry, converter *conversion.Converter, privateScheme *runtime.Scheme, corsOrigins []string) (chi.Router, error) {
+// publicRegistry defines the public API types and schemas.
+// privateRegistry provides the shared storage backend.
+func setupConvertingRouter(publicRegistry *ResourceRegistry, privateRegistry *ResourceRegistry, converter *conversion.Converter, privateScheme *runtime.Scheme, corsOrigins []string) (chi.Router, error) {
 	r := chi.NewRouter()
 
 	// Add CORS middleware
@@ -109,17 +111,17 @@ func setupConvertingRouter(registry *ResourceRegistry, converter *conversion.Con
 		AllowedOrigins: corsOrigins,
 	}))
 
-	// Create discovery handler
-	discoveryHandler := handlers.NewDiscoveryHandler(registry)
+	// Create discovery handler using public registry (for public API types)
+	discoveryHandler := handlers.NewDiscoveryHandler(publicRegistry)
 
 	// Discovery endpoints (must be registered BEFORE resource routes to avoid shadowing)
 	r.Get("/apis", discoveryHandler.APIGroupList)
 	r.Get("/openapi/v2", discoveryHandler.OpenAPIV2)
 	r.Get("/openapi/v3", discoveryHandler.OpenAPIV3)
 
-	// Group resources by GroupVersion
+	// Group resources by GroupVersion (from public registry)
 	gvResources := make(map[string][]ResourceInfo)
-	for _, res := range registry.GetResources() {
+	for _, res := range publicRegistry.GetResources() {
 		gv := fmt.Sprintf("%s/%s", res.GVK.Group, res.GVK.Version)
 		gvResources[gv] = append(gvResources[gv], res)
 	}
@@ -138,7 +140,7 @@ func setupConvertingRouter(registry *ResourceRegistry, converter *conversion.Con
 
 			// Cluster-scoped LIST endpoints (across all namespaces)
 			for _, res := range resources {
-				handlerInterface, err := registry.CreateConvertingHandler(converter, privateScheme, res)
+				handlerInterface, err := createConvertingHandlerWithSharedStore(publicRegistry, privateRegistry, converter, privateScheme, res)
 				if err != nil {
 					// Log error but continue with other resources
 					continue
@@ -154,7 +156,7 @@ func setupConvertingRouter(registry *ResourceRegistry, converter *conversion.Con
 			r.Route("/namespaces/{namespace}", func(r chi.Router) {
 				// Register routes for each resource
 				for _, res := range resources {
-					handlerInterface, err := registry.CreateConvertingHandler(converter, privateScheme, res)
+					handlerInterface, err := createConvertingHandlerWithSharedStore(publicRegistry, privateRegistry, converter, privateScheme, res)
 					if err != nil {
 						// Log error but continue with other resources
 						continue
