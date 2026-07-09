@@ -114,6 +114,13 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Set GVK
 	clientObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
+	// Validate owner references
+	if err := h.validateOwnerReferences(clientObj); err != nil {
+		h.logger.V(1).Info("Owner reference validation failed", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "error", err)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid ownerReferences: %v", err))
+		return
+	}
+
 	// Store object
 	if err := h.store.Create(clientObj); err != nil {
 		h.logger.Error(err, "Create failed", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
@@ -330,6 +337,13 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Set GVK
 	clientObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
+	// Validate owner references
+	if err := h.validateOwnerReferences(clientObj); err != nil {
+		h.logger.V(1).Info("Owner reference validation failed", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "error", err)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid ownerReferences: %v", err))
+		return
+	}
+
 	// Update object
 	if err := h.store.Update(clientObj); err != nil {
 		h.logger.Error(err, "Update failed", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
@@ -469,9 +483,40 @@ func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse propagation policy from query parameter
+	// Values: Orphan, Background (default), Foreground
+	propagationPolicy := r.URL.Query().Get("propagationPolicy")
+	if propagationPolicy == "" {
+		propagationPolicy = "Background"
+	}
+
 	// Check if object has finalizers and is not already being deleted
 	finalizers := accessor.GetFinalizers()
 	deletionTimestamp := accessor.GetDeletionTimestamp()
+	ownerUID := string(accessor.GetUID())
+
+	// Handle propagation policy before finalizer check
+	if deletionTimestamp == nil {
+		switch propagationPolicy {
+		case "Orphan":
+			// Remove this owner from all dependent objects
+			h.logger.Info("Orphaning dependents", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "policy", propagationPolicy)
+			if err := h.removeOwnerReferencesFromDependents(namespace, name, ownerUID); err != nil {
+				h.logger.Error(err, "Failed to orphan dependents", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
+			}
+
+		case "Foreground":
+			// Delete dependents synchronously before deleting this object
+			h.logger.Info("Cascade deleting dependents (foreground)", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "policy", propagationPolicy)
+			if err := h.deleteDependents(namespace, name, ownerUID); err != nil {
+				h.logger.Error(err, "Failed to delete dependents", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
+			}
+
+		case "Background":
+			// Background deletion (default) - GC will clean up dependents asynchronously
+			h.logger.V(1).Info("Using background cascade deletion (GC handles dependents)", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "policy", propagationPolicy)
+		}
+	}
 
 	if len(finalizers) > 0 {
 		if deletionTimestamp == nil {
@@ -493,7 +538,7 @@ func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			h.logger.Info("Marked for deletion (finalizers present)", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "finalizers", finalizers)
+			h.logger.Info("Marked for deletion (finalizers present)", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "finalizers", finalizers, "propagationPolicy", propagationPolicy)
 		} else {
 			h.logger.V(1).Info("Already marked for deletion", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "finalizers", finalizers)
 		}
@@ -516,7 +561,7 @@ func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger.Info("Deleted", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
+	h.logger.Info("Deleted", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "propagationPolicy", propagationPolicy)
 
 	// Return success status
 	status := metav1.Status{
