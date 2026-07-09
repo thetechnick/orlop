@@ -35,16 +35,15 @@ func (g *Generator) generateSchemas(rootPath string) error {
 		return nil
 	}
 
-	// Find packages with root types and get the directory where they're defined
-	var hasRootTypes bool
-	var versionedPkgDir string
+	// Find all packages with root types and generate schemas for each
+	var packagesWithRootTypes []string
 	for _, root := range roots {
 		root.NeedSyntax()
+		hasRootTypes := false
 		for _, file := range root.Syntax {
 			for _, comment := range file.Comments {
 				if strings.Contains(comment.Text(), "+kubebuilder:object:root") {
 					hasRootTypes = true
-					versionedPkgDir = root.Dir
 					break
 				}
 			}
@@ -53,23 +52,29 @@ func (g *Generator) generateSchemas(rootPath string) error {
 			}
 		}
 		if hasRootTypes {
-			break
+			packagesWithRootTypes = append(packagesWithRootTypes, root.Dir)
 		}
 	}
 
-	if !hasRootTypes {
+	if len(packagesWithRootTypes) == 0 {
 		return nil
 	}
 
-	// Generate CRDs in the versioned directory where root types are defined
-	crdOutputDir := versionedPkgDir
-	if err := g.generateCRDs(roots, crdOutputDir); err != nil {
-		return fmt.Errorf("failed to generate CRDs: %w", err)
-	}
+	// Generate CRDs and schemas for each package with root types
+	for _, pkgDir := range packagesWithRootTypes {
+		// Load just this package
+		pkgRoots, err := loader.LoadRoots(pkgDir)
+		if err != nil {
+			return fmt.Errorf("failed to load package %s: %w", pkgDir, err)
+		}
 
-	// Extract schemas and embed them in the same directory
-	if err := g.embedSchemas(crdOutputDir, crdOutputDir); err != nil {
-		return fmt.Errorf("failed to embed schemas: %w", err)
+		if err := g.generateCRDs(pkgRoots, pkgDir); err != nil {
+			return fmt.Errorf("failed to generate CRDs for %s: %w", pkgDir, err)
+		}
+
+		if err := g.embedSchemas(pkgDir, pkgDir); err != nil {
+			return fmt.Errorf("failed to embed schemas for %s: %w", pkgDir, err)
+		}
 	}
 
 	return nil
