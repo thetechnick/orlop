@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/evanphx/json-patch/v5"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/thetechnick/orlop/pkg/apiserver/apply"
@@ -578,8 +579,11 @@ func (h *ResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
 	switch contentType {
 	case "application/json-patch+json":
 		// JSON Patch (RFC 6902)
-		writeError(w, http.StatusUnsupportedMediaType, "JSON Patch not yet supported")
-		return
+		patchedJSON, err = h.jsonPatch(existingJSON, patchBytes)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("json patch failed: %v", err))
+			return
+		}
 	case "application/merge-patch+json":
 		// JSON Merge Patch (RFC 7386)
 		patchedJSON, err = jsonMergePatch(existingJSON, patchBytes)
@@ -734,6 +738,24 @@ func specChanged(old, new runtime.Object) bool {
 	newSpec, _ := json.Marshal(newMap["spec"])
 
 	return string(oldSpec) != string(newSpec)
+}
+
+// jsonPatch applies a JSON Patch (RFC 6902) to the original JSON.
+// JSON Patch is a sequence of operations: add, remove, replace, move, copy, test.
+func (h *ResourceHandler) jsonPatch(originalJSON, patchBytes []byte) ([]byte, error) {
+	// Parse the JSON Patch
+	patch, err := jsonpatch.DecodePatch(patchBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode JSON patch: %w", err)
+	}
+
+	// Apply the patch
+	patchedJSON, err := patch.Apply(originalJSON)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply JSON patch: %w", err)
+	}
+
+	return patchedJSON, nil
 }
 
 // strategicMergePatch applies a strategic merge patch using Kubernetes semantics.
