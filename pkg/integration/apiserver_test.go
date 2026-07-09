@@ -1208,6 +1208,196 @@ func TestOtherResource(t *testing.T) {
 	doRequest(t, "DELETE", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/others/%s", namespace, name), nil)
 }
 
+func TestClusterScopedList(t *testing.T) {
+	// Create objects in multiple namespaces
+	objects := []struct {
+		namespace string
+		name      string
+	}{
+		{"default", "cluster-test-1"},
+		{"default", "cluster-test-2"},
+		{"kube-system", "cluster-test-3"},
+		{"kube-public", "cluster-test-4"},
+	}
+
+	// Create all objects
+	for _, obj := range objects {
+		createPayload := map[string]interface{}{
+			"apiVersion": "test.orlop.thetechnick.ninja/v1",
+			"kind":       "Object",
+			"metadata": map[string]interface{}{
+				"name":      obj.name,
+				"namespace": obj.namespace,
+			},
+			"spec": map[string]interface{}{
+				"publicField":   "test-value",
+				"internalField": "internal-value",
+				"nested": map[string]interface{}{
+					"publicField":   "nested-value",
+					"internalField": "nested-internal",
+				},
+			},
+		}
+
+		resp, body := doRequest(t, "POST", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", obj.namespace), createPayload)
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("Failed to create object %s/%s: status %d: %s", obj.namespace, obj.name, resp.StatusCode, body)
+		}
+	}
+
+	// Test cluster-scoped LIST (all namespaces)
+	t.Run("Cluster-scoped LIST returns all objects", func(t *testing.T) {
+		resp, body := doRequest(t, "GET", "/apis/test.orlop.thetechnick.ninja/v1/objects", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", resp.StatusCode, body)
+		}
+
+		var list map[string]interface{}
+		json.Unmarshal([]byte(body), &list)
+		items := list["items"].([]interface{})
+
+		// Should return at least the 4 objects we just created
+		if len(items) < 4 {
+			t.Fatalf("Expected at least 4 objects in cluster-scoped list, got %d", len(items))
+		}
+
+		// Verify objects from different namespaces are included
+		namespacesFound := make(map[string]bool)
+		namesFound := make(map[string]bool)
+		for _, item := range items {
+			itemMap := item.(map[string]interface{})
+			metadata := itemMap["metadata"].(map[string]interface{})
+			namespace := metadata["namespace"].(string)
+			name := metadata["name"].(string)
+			namespacesFound[namespace] = true
+			namesFound[name] = true
+		}
+
+		// Check that objects from all namespaces are present
+		expectedNamespaces := []string{"default", "kube-system", "kube-public"}
+		for _, ns := range expectedNamespaces {
+			if !namespacesFound[ns] {
+				t.Errorf("Expected objects from namespace %s, but none found", ns)
+			}
+		}
+
+		// Check that all created objects are present
+		for _, obj := range objects {
+			if !namesFound[obj.name] {
+				t.Errorf("Expected object %s to be in cluster-scoped list, but not found", obj.name)
+			}
+		}
+	})
+
+	// Test namespace-scoped LIST only returns objects from that namespace
+	t.Run("Namespace-scoped LIST returns only objects from that namespace", func(t *testing.T) {
+		resp, body := doRequest(t, "GET", "/apis/test.orlop.thetechnick.ninja/v1/namespaces/default/objects", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", resp.StatusCode, body)
+		}
+
+		var list map[string]interface{}
+		json.Unmarshal([]byte(body), &list)
+		items := list["items"].([]interface{})
+
+		// Count objects from default namespace
+		defaultCount := 0
+		for _, item := range items {
+			itemMap := item.(map[string]interface{})
+			metadata := itemMap["metadata"].(map[string]interface{})
+			namespace := metadata["namespace"].(string)
+			if namespace == "default" {
+				defaultCount++
+			} else {
+				t.Errorf("Namespace-scoped list returned object from wrong namespace: %s", namespace)
+			}
+		}
+
+		// Should have exactly 2 objects in default namespace (from our test data)
+		if defaultCount < 2 {
+			t.Errorf("Expected at least 2 objects from default namespace, got %d", defaultCount)
+		}
+	})
+
+	// Test cluster-scoped LIST with label selector
+	t.Run("Cluster-scoped LIST with label selector", func(t *testing.T) {
+		// Create objects with labels in different namespaces
+		labeledObjects := []struct {
+			namespace string
+			name      string
+			labels    map[string]string
+		}{
+			{"default", "labeled-1", map[string]string{"env": "prod"}},
+			{"kube-system", "labeled-2", map[string]string{"env": "prod"}},
+			{"default", "labeled-3", map[string]string{"env": "dev"}},
+		}
+
+		for _, obj := range labeledObjects {
+			createPayload := map[string]interface{}{
+				"apiVersion": "test.orlop.thetechnick.ninja/v1",
+				"kind":       "Object",
+				"metadata": map[string]interface{}{
+					"name":      obj.name,
+					"namespace": obj.namespace,
+					"labels":    obj.labels,
+				},
+				"spec": map[string]interface{}{
+					"publicField":   "test",
+					"internalField": "internal",
+					"nested": map[string]interface{}{
+						"publicField":   "nested",
+						"internalField": "nested-internal",
+					},
+				},
+			}
+
+			doRequest(t, "POST", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", obj.namespace), createPayload)
+		}
+
+		// Query cluster-scoped with label selector
+		resp, body := doRequest(t, "GET", "/apis/test.orlop.thetechnick.ninja/v1/objects?labelSelector="+url.QueryEscape("env=prod"), nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("Expected status 200, got %d: %s", resp.StatusCode, body)
+		}
+
+		var list map[string]interface{}
+		json.Unmarshal([]byte(body), &list)
+		items := list["items"].([]interface{})
+
+		// Should return 2 objects with env=prod from different namespaces
+		prodCount := 0
+		namespacesWithProd := make(map[string]bool)
+		for _, item := range items {
+			itemMap := item.(map[string]interface{})
+			metadata := itemMap["metadata"].(map[string]interface{})
+			if labels, ok := metadata["labels"].(map[string]interface{}); ok {
+				if env, ok := labels["env"].(string); ok && env == "prod" {
+					prodCount++
+					namespacesWithProd[metadata["namespace"].(string)] = true
+				}
+			}
+		}
+
+		if prodCount < 2 {
+			t.Errorf("Expected at least 2 objects with env=prod across all namespaces, got %d", prodCount)
+		}
+
+		if !namespacesWithProd["default"] || !namespacesWithProd["kube-system"] {
+			t.Error("Expected prod objects from both default and kube-system namespaces")
+		}
+
+		// Cleanup labeled objects
+		for _, obj := range labeledObjects {
+			doRequest(t, "DELETE", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/%s", obj.namespace, obj.name), nil)
+		}
+	})
+
+	// Cleanup all created objects
+	for _, obj := range objects {
+		doRequest(t, "DELETE", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/%s", obj.namespace, obj.name), nil)
+	}
+}
+
 // Helper functions
 
 func doRequest(t *testing.T, method, path string, body interface{}) (*http.Response, string) {

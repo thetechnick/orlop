@@ -146,7 +146,11 @@ func (h *ResourceHandler) Get(w http.ResponseWriter, r *http.Request) {
 // List handles GET requests to list resources.
 func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	namespace := chi.URLParam(r, "namespace")
-	log.Printf("[LIST] %s namespace=%s", h.gvk.Kind, namespace)
+	if namespace == "" {
+		log.Printf("[LIST] %s scope=cluster", h.gvk.Kind)
+	} else {
+		log.Printf("[LIST] %s namespace=%s", h.gvk.Kind, namespace)
+	}
 
 	// Build list options from query parameters
 	opts := client.ListOptions{
@@ -157,7 +161,11 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	if labelSelectorStr := r.URL.Query().Get("labelSelector"); labelSelectorStr != "" {
 		selector, err := labels.Parse(labelSelectorStr)
 		if err != nil {
-			log.Printf("[LIST] %s namespace=%s error=invalid-label-selector", h.gvk.Kind, namespace)
+			if namespace == "" {
+				log.Printf("[LIST] %s scope=cluster error=invalid-label-selector", h.gvk.Kind)
+			} else {
+				log.Printf("[LIST] %s namespace=%s error=invalid-label-selector", h.gvk.Kind, namespace)
+			}
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid label selector: %v", err))
 			return
 		}
@@ -166,14 +174,22 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	// Check if this is a watch request
 	if r.URL.Query().Get("watch") == "true" {
-		log.Printf("[WATCH] %s namespace=%s", h.gvk.Kind, namespace)
+		if namespace == "" {
+			log.Printf("[WATCH] %s scope=cluster", h.gvk.Kind)
+		} else {
+			log.Printf("[WATCH] %s namespace=%s", h.gvk.Kind, namespace)
+		}
 		h.handleWatch(w, r, opts)
 		return
 	}
 
 	list, err := h.store.List(opts)
 	if err != nil {
-		log.Printf("[LIST] %s namespace=%s error=%v", h.gvk.Kind, namespace, err)
+		if namespace == "" {
+			log.Printf("[LIST] %s scope=cluster error=%v", h.gvk.Kind, err)
+		} else {
+			log.Printf("[LIST] %s namespace=%s error=%v", h.gvk.Kind, namespace, err)
+		}
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to list objects: %v", err))
 		return
 	}
@@ -187,7 +203,11 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 		items, _ := meta.ExtractList(list)
 		count = len(items)
 	}
-	log.Printf("[LIST] %s namespace=%s count=%d", h.gvk.Kind, namespace, count)
+	if namespace == "" {
+		log.Printf("[LIST] %s scope=cluster count=%d", h.gvk.Kind, count)
+	} else {
+		log.Printf("[LIST] %s namespace=%s count=%d", h.gvk.Kind, namespace, count)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

@@ -47,6 +47,20 @@ func setupRouter(registry *ResourceRegistry, corsOrigins []string) (chi.Router, 
 				discoveryHandler.APIResourceList(w, req, group, version)
 			})
 
+			// Cluster-scoped LIST endpoints (across all namespaces)
+			for _, res := range resources {
+				handler, err := registry.CreateHandler(res)
+				if err != nil {
+					// Log error but continue with other resources
+					continue
+				}
+
+				plural := res.Plural
+
+				// Cluster-scoped LIST endpoint
+				r.Get("/"+plural, handler.List)
+			}
+
 			r.Route("/namespaces/{namespace}", func(r chi.Router) {
 				// Register routes for each resource
 				for _, res := range resources {
@@ -121,6 +135,21 @@ func setupConvertingRouter(registry *ResourceRegistry, converter *conversion.Con
 			r.Get("/", func(w http.ResponseWriter, req *http.Request) {
 				discoveryHandler.APIResourceList(w, req, group, version)
 			})
+
+			// Cluster-scoped LIST endpoints (across all namespaces)
+			for _, res := range resources {
+				handlerInterface, err := registry.CreateConvertingHandler(converter, privateScheme, res)
+				if err != nil {
+					// Log error but continue with other resources
+					continue
+				}
+
+				handler := handlerInterface.(*handlers.ConvertingResourceHandler)
+				plural := res.Plural
+
+				// Cluster-scoped LIST endpoint
+				r.Get("/"+plural, handler.List)
+			}
 
 			r.Route("/namespaces/{namespace}", func(r chi.Router) {
 				// Register routes for each resource
