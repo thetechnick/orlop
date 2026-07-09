@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -588,8 +589,7 @@ func (h *ResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
 		}
 	case "application/strategic-merge-patch+json":
 		// Strategic Merge Patch (Kubernetes default)
-		// For now, use simple merge patch as strategic merge requires schema knowledge
-		patchedJSON, err = jsonMergePatch(existingJSON, patchBytes)
+		patchedJSON, err = h.strategicMergePatch(existing, patchBytes)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("strategic merge patch failed: %v", err))
 			return
@@ -734,6 +734,32 @@ func specChanged(old, new runtime.Object) bool {
 	newSpec, _ := json.Marshal(newMap["spec"])
 
 	return string(oldSpec) != string(newSpec)
+}
+
+// strategicMergePatch applies a strategic merge patch using Kubernetes semantics.
+// Strategic merge patch understands list merge strategies and struct tags.
+func (h *ResourceHandler) strategicMergePatch(original client.Object, patchBytes []byte) ([]byte, error) {
+	// Convert original object to JSON
+	originalJSON, err := json.Marshal(original)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal original: %w", err)
+	}
+
+	// Create a new object of the same type for the patch result
+	// This is needed because strategicpatch requires a typed object
+	patchedObj, err := h.scheme.New(h.gvk)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create object for patch: %w", err)
+	}
+
+	// Apply strategic merge patch
+	// The strategicpatch package uses struct tags to determine merge strategies
+	patchedJSON, err := strategicpatch.StrategicMergePatch(originalJSON, patchBytes, patchedObj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to apply strategic merge patch: %w", err)
+	}
+
+	return patchedJSON, nil
 }
 
 // jsonMergePatch applies a JSON merge patch (RFC 7386) to original JSON.
