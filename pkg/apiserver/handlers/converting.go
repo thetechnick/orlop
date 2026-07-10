@@ -1,18 +1,16 @@
 package handlers
 
 import (
-	"github.com/thetechnick/orlop/pkg/apiserver/constants"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"github.com/go-logr/logr"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-logr/logr"
 	"github.com/google/uuid"
+	"github.com/thetechnick/orlop/pkg/apiserver/constants"
 	"github.com/thetechnick/orlop/pkg/apiserver/conversion"
 	"github.com/thetechnick/orlop/pkg/apiserver/schema"
 	"github.com/thetechnick/orlop/pkg/apiserver/storage"
@@ -271,234 +269,48 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 
 // handleWatch handles watch requests using streaming JSON.
 func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, opts storage.ListOptions) {
-	// Get resourceVersion to start from
-	resourceVersion := r.URL.Query().Get(constants.QueryParamResourceVersion)
-
-	// Parse watch parameters
-	allowWatchBookmarks := r.URL.Query().Get(constants.QueryParamAllowWatchBookmarks) == "true"
-	sendInitialEvents := r.URL.Query().Get(constants.QueryParamSendInitialEvents) == "true"
-	resourceVersionMatch := r.URL.Query().Get(constants.QueryParamResourceVersionMatch)
-	timeoutSeconds := r.URL.Query().Get(constants.QueryParamTimeoutSeconds)
+	config := parseWatchConfig(r)
 
 	h.logger.V(1).Info("Watch parameters (converting)",
-		allowWatchBookmarks, sendInitialEvents, resourceVersionMatch, timeoutSeconds)
+		config.allowWatchBookmarks, config.sendInitialEvents, config.resourceVersionMatch, config.timeoutSeconds)
 
 	// Apply timeout if specified
-	ctx := r.Context()
-	if timeoutSeconds != "" {
-		if timeout, err := strconv.ParseInt(timeoutSeconds, 10, 64); err == nil && timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
-			defer cancel()
-		}
-	}
+	ctx := applyWatchTimeout(r.Context(), config.timeoutSeconds)
 
 	// Start watch
-	eventCh, stop, err := h.store.Watch(opts, resourceVersion)
+	eventCh, stop, err := h.store.Watch(opts, config.resourceVersion)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to start watch: %v", err))
 		return
 	}
 	defer stop()
 
-	// Set headers for streaming
-	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
-	w.Header().Set(constants.HeaderTransferEncoding, constants.TransferEncodingChunked)
-	w.WriteHeader(http.StatusOK)
+	// Get current resource version and check if list is empty
+	var currentRV string
+	var isEmpty bool
+	list, err := h.store.List(opts)
+	if err == nil {
+		currentRV = list.GetResourceVersion()
+		items, _ := meta.ExtractList(list)
+		isEmpty = len(items) == 0
+	} else {
+		currentRV = "0"
+		isEmpty = true
+	}
 
-	// Get flusher for streaming
-	flusher, ok := w.(http.Flusher)
-	if !ok {
+	// Set up streaming response
+	streamer, err := newWatchStreamer(w, h.gvk, currentRV, isEmpty)
+	if err != nil {
 		return
 	}
 
-	// Set up BOOKMARK ticker if requested
-	var bookmarkTicker *time.Ticker
-	var bookmarkCh <-chan time.Time
-	if allowWatchBookmarks {
-		// Send BOOKMARK events every 30 seconds
-		bookmarkTicker = time.NewTicker(30 * time.Second)
-		bookmarkCh = bookmarkTicker.C
-		defer bookmarkTicker.Stop()
+	// Create transformer to convert private objects to public
+	transformer := func(obj client.Object) (interface{}, error) {
+		return h.converter.PrivateToPublic(obj)
 	}
 
-	// Track last resource version for BOOKMARK events
-	// Get the current resource version from store to know when we're caught up
-	var currentResourceVersion string
-	var listIsEmpty bool
-	list, err := h.store.List(opts)
-	if err == nil {
-		currentResourceVersion = list.GetResourceVersion()
-		// Check if list is empty (no objects to replay)
-		items, _ := meta.ExtractList(list)
-		listIsEmpty = len(items) == 0
-	} else {
-		currentResourceVersion = "0"
-		listIsEmpty = true
-	}
-
-	lastResourceVersion := currentResourceVersion
-	initialBookmarkSent := false
-	requestedResourceVersion := resourceVersion
-	if requestedResourceVersion == "" {
-		requestedResourceVersion = "0"
-	}
-
-	encoder := json.NewEncoder(w)
-
-	// If sendInitialEvents=true, send all existing objects as ADDED events (converted to public)
-	if sendInitialEvents && err == nil {
-		items, _ := meta.ExtractList(list)
-		h.logger.V(1).Info("Sending initial events (converting)", "count", len(items))
-		for _, privateItem := range items {
-			// Convert private object to public
-			publicObj, err := h.converter.PrivateToPublic(privateItem)
-			if err != nil {
-				continue // Skip objects that fail conversion
-			}
-
-			watchEvent := map[string]interface{}{
-				"type":   string(storage.EventAdded),
-				"object": publicObj,
-			}
-			if err := encoder.Encode(watchEvent); err != nil {
-				return
-			}
-			flusher.Flush()
-		}
-
-		// After sending initial events, send a BOOKMARK with annotation marking end of initial events
-		if allowWatchBookmarks {
-			initialBookmarkSent = true
-
-			bookmarkObj := map[string]interface{}{
-				"apiVersion": h.gvk.GroupVersion().String(),
-				"kind":       h.gvk.Kind,
-				constants.FieldMetadata: map[string]interface{}{
-					"resourceVersion": lastResourceVersion,
-					"annotations": map[string]interface{}{
-						constants.AnnotationInitialEventsEnd: "true",
-					},
-				},
-			}
-			watchEvent := map[string]interface{}{
-				"type":   string(storage.EventBookmark),
-				"object": bookmarkObj,
-			}
-
-			if err := encoder.Encode(watchEvent); err != nil {
-				return
-			}
-			flusher.Flush()
-		}
-	}
-
-	// If already caught up (requested RV >= current RV) OR list is empty (no historical events),
-	// send initial BOOKMARK immediately (without sendInitialEvents)
-	// Compare as integers since resourceVersions are numeric strings
-	requestedRVInt, _ := strconv.ParseInt(requestedResourceVersion, 10, 64)
-	currentRVInt, _ := strconv.ParseInt(currentResourceVersion, 10, 64)
-	if !sendInitialEvents && allowWatchBookmarks && (requestedRVInt >= currentRVInt || listIsEmpty) {
-		initialBookmarkSent = true
-
-		bookmarkObj := map[string]interface{}{
-			"apiVersion": h.gvk.GroupVersion().String(),
-			"kind":       h.gvk.Kind,
-			constants.FieldMetadata: map[string]interface{}{
-				"resourceVersion": lastResourceVersion,
-			},
-		}
-		watchEvent := map[string]interface{}{
-			"type":   string(storage.EventBookmark),
-			"object": bookmarkObj,
-		}
-
-		if err := encoder.Encode(watchEvent); err != nil {
-			return
-		}
-		flusher.Flush()
-	}
-
-	// Stream events
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-
-		case <-bookmarkCh:
-			// Send periodic BOOKMARK event with current resource version
-			bookmarkObj := map[string]interface{}{
-				"apiVersion": h.gvk.GroupVersion().String(),
-				"kind":       h.gvk.Kind,
-				constants.FieldMetadata: map[string]interface{}{
-					"resourceVersion": lastResourceVersion,
-				},
-			}
-			watchEvent := map[string]interface{}{
-				"type":   string(storage.EventBookmark),
-				"object": bookmarkObj,
-			}
-
-			if err := encoder.Encode(watchEvent); err != nil {
-				return
-			}
-			flusher.Flush()
-
-		case event, ok := <-eventCh:
-			if !ok {
-				return
-			}
-
-			// Update last resource version
-			lastResourceVersion = event.ResourceVersion
-
-			// Convert private object to public
-			publicObj, err := h.converter.PrivateToPublic(event.Object)
-			if err != nil {
-				continue // Skip objects that fail conversion
-			}
-
-			// Send watch event
-			watchEvent := map[string]interface{}{
-				"type":   event.Type,
-				"object": publicObj,
-			}
-
-			if err := encoder.Encode(watchEvent); err != nil {
-				return
-			}
-			flusher.Flush()
-
-			// Send initial BOOKMARK after we've caught up with the current resourceVersion
-			// This signals that all requested historical events have been delivered
-			if allowWatchBookmarks && !initialBookmarkSent {
-				// Check if this event's RV >= current RV (snapshot at watch start), meaning we've caught up
-				// Compare as integers since resourceVersions are numeric strings
-				eventRVInt, _ := strconv.ParseInt(event.ResourceVersion, 10, 64)
-				if eventRVInt >= currentRVInt {
-					initialBookmarkSent = true
-
-					bookmarkObj := map[string]interface{}{
-						"apiVersion": h.gvk.GroupVersion().String(),
-						"kind":       h.gvk.Kind,
-						constants.FieldMetadata: map[string]interface{}{
-							"resourceVersion": lastResourceVersion,
-						},
-					}
-					watchEvent := map[string]interface{}{
-						"type":   string(storage.EventBookmark),
-						"object": bookmarkObj,
-					}
-
-					if err := encoder.Encode(watchEvent); err != nil {
-						return
-					}
-					flusher.Flush()
-				}
-			}
-		}
-	}
+	// Stream watch events with transformation
+	streamWatch(ctx, streamer, eventCh, config, opts, h.store, transformer)
 }
 
 // Update handles PUT requests to update a resource.

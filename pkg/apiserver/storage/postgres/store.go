@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lib/pq"
 	"github.com/thetechnick/orlop/pkg/apiserver/storage"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -18,7 +17,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/selection"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -228,132 +226,10 @@ func (s *PostgresStore) Get(namespace, name string) (client.Object, error) {
 func (s *PostgresStore) List(opts storage.ListOptions) (client.ObjectList, error) {
 	ctx := context.Background()
 
-	// Parse label selector if specified
-	var labelSelector labels.Selector
-	if opts.LabelSelector != "" {
-		var err error
-		labelSelector, err = labels.Parse(opts.LabelSelector)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Build query with all filters at database level
-	query := fmt.Sprintf("SELECT namespace, name, data FROM %s WHERE 1=1", s.tableName)
-	args := []interface{}{}
-	argNum := 1
-
-	// Filter by namespace
-	if opts.Namespace != "" {
-		query += fmt.Sprintf(" AND namespace = $%d", argNum)
-		args = append(args, opts.Namespace)
-		argNum++
-	}
-
-	// Apply label selector using JSONB containment operator
-	if opts.LabelSelector != "" {
-		requirements, _ := labelSelector.Requirements()
-		for _, req := range requirements {
-			key := req.Key()
-			values := req.Values()
-
-			switch req.Operator() {
-			case selection.Exists:
-				// Label key must exist
-				query += fmt.Sprintf(" AND labels ? $%d", argNum)
-				args = append(args, key)
-				argNum++
-			case selection.DoesNotExist:
-				// Label key must not exist
-				query += fmt.Sprintf(" AND NOT (labels ? $%d)", argNum)
-				args = append(args, key)
-				argNum++
-			case selection.Equals, selection.DoubleEquals, selection.In:
-				// Label key must equal one of the values
-				if values.Len() == 1 {
-					// Single value: labels->>'key' = 'value'
-					query += fmt.Sprintf(" AND labels->>$%d = $%d", argNum, argNum+1)
-					args = append(args, key, values.List()[0])
-					argNum += 2
-				} else {
-					// Multiple values: labels->>'key' IN ('v1', 'v2', ...)
-					query += fmt.Sprintf(" AND labels->>$%d = ANY($%d)", argNum, argNum+1)
-					args = append(args, key, pq.Array(values.List()))
-					argNum += 2
-				}
-			case selection.NotEquals, selection.NotIn:
-				// Label key must not equal any of the values
-				if values.Len() == 1 {
-					query += fmt.Sprintf(" AND (NOT (labels ? $%d) OR labels->>$%d != $%d)", argNum, argNum, argNum+1)
-					args = append(args, key, values.List()[0])
-					argNum += 2
-				} else {
-					query += fmt.Sprintf(" AND (NOT (labels ? $%d) OR NOT (labels->>$%d = ANY($%d)))", argNum, argNum, argNum+1)
-					args = append(args, key, pq.Array(values.List()))
-					argNum += 2
-				}
-			}
-		}
-	}
-
-	// Apply shard selector using PostgreSQL SHA-256 hash
-	if opts.ShardSelector != nil {
-		// Replicate the Go shard computation logic in SQL:
-		// 1. Concatenate namespace + "/" + name
-		// 2. SHA-256 hash the result
-		// 3. Take first 8 bytes as big-endian uint64
-		// 4. Modulo by shard count
-		// 5. Check if equals shard index
-		//
-		// PostgreSQL: get_byte(sha256(...), 0) gets the first byte
-		// We need to reconstruct the uint64 from 8 bytes in big-endian order
-		query += fmt.Sprintf(`
-			AND (
-				(get_byte(sha256((namespace || '/' || name)::bytea), 0)::bigint << 56) |
-				(get_byte(sha256((namespace || '/' || name)::bytea), 1)::bigint << 48) |
-				(get_byte(sha256((namespace || '/' || name)::bytea), 2)::bigint << 40) |
-				(get_byte(sha256((namespace || '/' || name)::bytea), 3)::bigint << 32) |
-				(get_byte(sha256((namespace || '/' || name)::bytea), 4)::bigint << 24) |
-				(get_byte(sha256((namespace || '/' || name)::bytea), 5)::bigint << 16) |
-				(get_byte(sha256((namespace || '/' || name)::bytea), 6)::bigint << 8) |
-				get_byte(sha256((namespace || '/' || name)::bytea), 7)::bigint
-			) %% $%d = $%d`, argNum, argNum+1)
-		args = append(args, opts.ShardSelector.Count, opts.ShardSelector.Index)
-		argNum += 2
-	}
-
-	// Apply continue token for pagination
-	if opts.Continue != "" {
-		continueToken, err := storage.DecodeContinueToken(opts.Continue)
-		if err != nil {
-			return nil, fmt.Errorf("invalid continue token: %w", err)
-		}
-
-		// Resume after the last returned object using lexicographic ordering
-		if continueToken.Namespace != "" {
-			// (namespace, name) > (continueToken.Namespace, continueToken.Name)
-			query += fmt.Sprintf(" AND (namespace, name) > ($%d, $%d)", argNum, argNum+1)
-			args = append(args, continueToken.Namespace, continueToken.Name)
-			argNum += 2
-		} else {
-			// Cluster-scoped resources: name > continueToken.Name
-			query += fmt.Sprintf(" AND name > $%d", argNum)
-			args = append(args, continueToken.Name)
-			argNum++
-		}
-	}
-
-	// Order by namespace and name for stable pagination
-	query += " ORDER BY namespace, name"
-
-	// Apply limit for pagination
-	var queryLimit int64
-	if opts.Limit > 0 {
-		// Fetch one extra to determine if there are more results
-		queryLimit = opts.Limit + 1
-		query += fmt.Sprintf(" LIMIT $%d", argNum)
-		args = append(args, queryLimit)
-		argNum++
+	// Build query using QueryBuilder
+	query, args, err := s.buildListQuery(opts)
+	if err != nil {
+		return nil, err
 	}
 
 	// Execute query
@@ -650,3 +526,41 @@ func findSubstring(s, substr string) bool {
 
 // Verify PostgresStore implements ResourceStore.
 var _ storage.ResourceStore = (*PostgresStore)(nil)
+
+// buildListQuery constructs the SQL query for List operations using QueryBuilder.
+func (s *PostgresStore) buildListQuery(opts storage.ListOptions) (string, []interface{}, error) {
+	// Parse label selector if needed
+	var labelSelector labels.Selector
+	var err error
+	if opts.LabelSelector != "" {
+		labelSelector, err = labels.Parse(opts.LabelSelector)
+		if err != nil {
+			return "", nil, err
+		}
+	}
+
+	// Decode continue token if needed
+	var continueToken *storage.ContinueToken
+	if opts.Continue != "" {
+		continueToken, err = storage.DecodeContinueToken(opts.Continue)
+		if err != nil {
+			return "", nil, fmt.Errorf("invalid continue token: %w", err)
+		}
+	}
+
+	// Build query using fluent API
+	qb := NewQueryBuilder(s.tableName, "namespace", "name", "data")
+	qb.WhereNamespace(opts.Namespace)
+	qb.WhereLabelSelector(labelSelector)
+	qb.WhereShardSelector(opts.ShardSelector)
+	qb.WhereContinueToken(continueToken)
+	qb.OrderBy("namespace", "name")
+
+	// Add limit with +1 for hasMore detection
+	if opts.Limit > 0 {
+		qb.Limit(opts.Limit + 1)
+	}
+
+	query, args := qb.Build()
+	return query, args, nil
+}
