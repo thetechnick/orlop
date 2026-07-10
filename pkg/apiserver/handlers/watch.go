@@ -176,7 +176,7 @@ func (h *ResourceHandler) sendInitialResourceEvents(wctx *watchContext, opts sto
 		// No need to filter here
 
 		watchEvent := map[string]interface{}{
-			"type":   "ADDED",
+			"type":   string(storage.EventAdded),
 			"object": item,
 		}
 		if err := wctx.encoder.Encode(watchEvent); err != nil {
@@ -245,7 +245,7 @@ func (h *ResourceHandler) streamResourceEvents(ctx context.Context, wctx *watchC
 
 			// Send watch event
 			watchEvent := map[string]interface{}{
-				"type":   event.Type,
+				"type":   string(event.Type),
 				"object": event.Object,
 			}
 
@@ -282,7 +282,7 @@ func (wctx *watchContext) sendBookmark(annotations map[string]interface{}) {
 	}
 
 	watchEvent := map[string]interface{}{
-		"type":   "BOOKMARK",
+		"type":   string(storage.EventBookmark),
 		"object": bookmarkObj,
 	}
 

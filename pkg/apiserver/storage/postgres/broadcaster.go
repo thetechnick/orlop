@@ -177,7 +177,7 @@ func (b *PostgresBroadcaster) parseNotification(payload string) (storage.Resourc
 	}
 
 	return storage.ResourceEvent{
-		Type:            event.Type,
+		Type:            storage.EventType(event.Type),
 		ResourceVersion: event.ResourceVersion,
 		Object:          obj,
 	}, nil
@@ -355,7 +355,7 @@ func (b *PostgresBroadcaster) sendHistoricalEvents(ch chan storage.ResourceEvent
 		}
 
 		event := storage.ResourceEvent{
-			Type:            eventType,
+			Type:            storage.EventType(eventType),
 			ResourceVersion: strconv.FormatInt(resourceVersion, 10),
 			Object:          obj,
 		}

@@ -185,7 +185,7 @@ func (s *PostgresStore) Create(obj client.Object) error {
 	// Broadcast event
 	if s.broadcaster != nil {
 		s.broadcaster.Broadcast(storage.ResourceEvent{
-			Type:            "ADDED",
+			Type:            storage.EventAdded,
 			Object:          obj.DeepCopyObject().(client.Object),
 			ResourceVersion: strconv.FormatInt(rv, 10),
 		})
@@ -487,7 +487,7 @@ func (s *PostgresStore) Update(obj client.Object) error {
 	// Broadcast event
 	if s.broadcaster != nil {
 		s.broadcaster.Broadcast(storage.ResourceEvent{
-			Type:            "MODIFIED",
+			Type:            storage.EventModified,
 			Object:          obj.DeepCopyObject().(client.Object),
 			ResourceVersion: strconv.FormatInt(rv, 10),
 		})
@@ -529,7 +529,7 @@ func (s *PostgresStore) Delete(namespace, name string) error {
 	if s.broadcaster != nil {
 		rv := s.nextResourceVersion()
 		s.broadcaster.Broadcast(storage.ResourceEvent{
-			Type:            "DELETED",
+			Type:            storage.EventDeleted,
 			Object:          obj,
 			ResourceVersion: strconv.FormatInt(rv, 10),
 		})

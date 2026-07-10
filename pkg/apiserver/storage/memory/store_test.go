@@ -348,7 +348,7 @@ func TestMemoryStore_Watch(t *testing.T) {
 		store.Create(obj)
 
 		event := <-eventCh
-		if event.Type != "ADDED" {
+		if event.Type != storage.EventAdded {
 			t.Errorf("Expected ADDED event, got %s", event.Type)
 		}
 		if event.Object == nil {
@@ -371,7 +371,7 @@ func TestMemoryStore_Watch(t *testing.T) {
 		store.Update(retrieved)
 
 		event := <-eventCh
-		if event.Type != "MODIFIED" {
+		if event.Type != storage.EventModified {
 			t.Errorf("Expected MODIFIED event, got %s", event.Type)
 		}
 	})
@@ -390,7 +390,7 @@ func TestMemoryStore_Watch(t *testing.T) {
 		store.Delete("default", "test")
 
 		event := <-eventCh
-		if event.Type != "DELETED" {
+		if event.Type != storage.EventDeleted {
 			t.Errorf("Expected DELETED event, got %s", event.Type)
 		}
 	})

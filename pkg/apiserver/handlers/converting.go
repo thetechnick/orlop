@@ -357,7 +357,7 @@ func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.R
 			}
 
 			watchEvent := map[string]interface{}{
-				"type":   "ADDED",
+				"type":   string(storage.EventAdded),
 				"object": publicObj,
 			}
 			if err := encoder.Encode(watchEvent); err != nil {
@@ -381,7 +381,7 @@ func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.R
 				},
 			}
 			watchEvent := map[string]interface{}{
-				"type":   "BOOKMARK",
+				"type":   string(storage.EventBookmark),
 				"object": bookmarkObj,
 			}
 
@@ -408,7 +408,7 @@ func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.R
 			},
 		}
 		watchEvent := map[string]interface{}{
-			"type":   "BOOKMARK",
+			"type":   string(storage.EventBookmark),
 			"object": bookmarkObj,
 		}
 
@@ -435,7 +435,7 @@ func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.R
 				},
 			}
 			watchEvent := map[string]interface{}{
-				"type":   "BOOKMARK",
+				"type":   string(storage.EventBookmark),
 				"object": bookmarkObj,
 			}
 
@@ -486,7 +486,7 @@ func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.R
 						},
 					}
 					watchEvent := map[string]interface{}{
-						"type":   "BOOKMARK",
+						"type":   string(storage.EventBookmark),
 						"object": bookmarkObj,
 					}
 

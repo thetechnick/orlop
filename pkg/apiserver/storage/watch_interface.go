@@ -43,7 +43,7 @@ type DefaultWatchFilter struct{}
 // Matches implements WatchFilter interface.
 func (f *DefaultWatchFilter) Matches(event ResourceEvent, opts client.ListOptions) bool {
 	// BOOKMARK events always pass through
-	if event.Type == "BOOKMARK" {
+	if event.Type == EventBookmark {
 		return true
 	}
 

@@ -102,7 +102,7 @@ func (s *MemoryStore) Create(obj client.Object) error {
 	// Broadcast watch event
 	watcher := s.broadcaster
 	watcher.Broadcast(storage.ResourceEvent{
-		Type:            "ADDED",
+		Type:            storage.EventAdded,
 		Object:          obj.DeepCopyObject().(client.Object),
 		ResourceVersion: fmt.Sprintf("%d", newVersion),
 	})
@@ -301,7 +301,7 @@ func (s *MemoryStore) Update(obj client.Object) error {
 	// Broadcast watch event
 	watcher := s.broadcaster
 	watcher.Broadcast(storage.ResourceEvent{
-		Type:            "MODIFIED",
+		Type:            storage.EventModified,
 		Object:          obj.DeepCopyObject().(client.Object),
 		ResourceVersion: fmt.Sprintf("%d", newVersion),
 	})
@@ -326,7 +326,7 @@ func (s *MemoryStore) Delete(namespace, name string) error {
 	// Broadcast watch event (use current RV since delete doesn't change it)
 	watcher := s.broadcaster
 	watcher.Broadcast(storage.ResourceEvent{
-		Type:            "DELETED",
+		Type:            storage.EventDeleted,
 		Object:          obj.DeepCopyObject().(client.Object),
 		ResourceVersion: s.currentResourceVersion(),
 	})

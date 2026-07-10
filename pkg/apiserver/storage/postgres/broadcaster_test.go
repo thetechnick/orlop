@@ -66,7 +66,7 @@ func TestPostgresBroadcaster_Broadcast(t *testing.T) {
 		// Broadcast event
 		obj := newTestObject(withName("test"), withNamespace("default"))
 		event := storage.ResourceEvent{
-			Type:            "ADDED",
+			Type:            storage.EventAdded,
 			Object:          obj,
 			ResourceVersion: "1",
 		}
@@ -76,7 +76,7 @@ func TestPostgresBroadcaster_Broadcast(t *testing.T) {
 		// Wait for event
 		select {
 		case received := <-eventCh:
-			if received.Type != "ADDED" {
+			if received.Type != storage.EventAdded {
 				t.Errorf("Expected ADDED event, got %s", received.Type)
 			}
 			if received.ResourceVersion != "1" {
@@ -93,7 +93,7 @@ func TestPostgresBroadcaster_Broadcast(t *testing.T) {
 
 		obj := newTestObject(withName("test"), withNamespace("default"))
 		event := storage.ResourceEvent{
-			Type:            "MODIFIED",
+			Type:            storage.EventModified,
 			Object:          obj,
 			ResourceVersion: "5",
 		}
@@ -133,7 +133,7 @@ func TestPostgresBroadcaster_Broadcast(t *testing.T) {
 		// Broadcast event
 		obj := newTestObject(withName("test"), withNamespace("default"))
 		event := storage.ResourceEvent{
-			Type:            "DELETED",
+			Type:            storage.EventDeleted,
 			Object:          obj,
 			ResourceVersion: "10",
 		}
@@ -220,7 +220,7 @@ func TestPostgresBroadcaster_HistoricalEvents(t *testing.T) {
 		for i := 1; i <= 3; i++ {
 			obj := newTestObject(withName("test"), withNamespace("default"))
 			event := storage.ResourceEvent{
-				Type:            "ADDED",
+				Type:            storage.EventAdded,
 				Object:          obj,
 				ResourceVersion: string(rune('0' + i)),
 			}
@@ -245,7 +245,7 @@ func TestPostgresBroadcaster_HistoricalEvents(t *testing.T) {
 		for received < 3 {
 			select {
 			case event := <-eventCh:
-				if event.Type == "ADDED" {
+				if event.Type == storage.EventAdded {
 					received++
 				}
 			case <-timeout:
@@ -323,7 +323,7 @@ func TestPostgresBroadcaster_PruneOldEvents(t *testing.T) {
 
 		// Insert recent event
 		broadcaster.Broadcast(storage.ResourceEvent{
-			Type:            "ADDED",
+			Type:            storage.EventAdded,
 			Object:          newTestObject(withName("recent"), withNamespace("default")),
 			ResourceVersion: "2",
 		})
@@ -434,7 +434,7 @@ func TestPostgresBroadcaster_MultiInstance(t *testing.T) {
 		// Broadcast from instance 1
 		obj := newTestObject(withName("test"), withNamespace("default"))
 		event := storage.ResourceEvent{
-			Type:            "ADDED",
+			Type:            storage.EventAdded,
 			Object:          obj,
 			ResourceVersion: "1",
 		}
@@ -444,7 +444,7 @@ func TestPostgresBroadcaster_MultiInstance(t *testing.T) {
 		// Instance 2 should receive the event via NOTIFY
 		select {
 		case received := <-eventCh:
-			if received.Type != "ADDED" {
+			if received.Type != storage.EventAdded {
 				t.Errorf("Expected ADDED event, got %s", received.Type)
 			}
 		case <-time.After(3 * time.Second):
