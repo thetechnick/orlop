@@ -193,14 +193,25 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 		opts.LabelSelector = selector
 	}
 
+	// Parse shard selector from query parameters
+	shardSelector, err := ParseShardSelector(
+		r.URL.Query().Get("shardIndex"),
+		r.URL.Query().Get("shardCount"),
+	)
+	if err != nil {
+		h.logger.V(1).Info("Invalid shard selector", "error", err)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid shard selector: %v", err))
+		return
+	}
+
 	// Check if this is a watch request
 	if r.URL.Query().Get("watch") == "true" {
 		if namespace == "" {
-			h.logger.V(1).Info("Watch request", "kind", h.gvk.Kind, "scope", "cluster", "uri", r.RequestURI)
+			h.logger.V(1).Info("Watch request", "kind", h.gvk.Kind, "scope", "cluster", "shard", shardSelector, "uri", r.RequestURI)
 		} else {
-			h.logger.V(1).Info("Watch request", "kind", h.gvk.Kind, "namespace", namespace, "uri", r.RequestURI)
+			h.logger.V(1).Info("Watch request", "kind", h.gvk.Kind, "namespace", namespace, "shard", shardSelector, "uri", r.RequestURI)
 		}
-		h.handleWatch(w, r, opts)
+		h.handleWatch(w, r, opts, shardSelector)
 		return
 	}
 
@@ -219,15 +230,51 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	list.GetObjectKind().SetGroupVersionKind(h.gvk.GroupVersion().WithKind(h.gvk.Kind + "List"))
 
 	listMeta, _ := meta.ListAccessor(list)
-	count := 0
+	totalCount := 0
 	if listMeta != nil {
 		items, _ := meta.ExtractList(list)
-		count = len(items)
-	}
-	if namespace == "" {
-		h.logger.V(1).Info("Listed", "kind", h.gvk.Kind, "scope", "cluster", "count", count)
-	} else {
-		h.logger.V(1).Info("Listed", "kind", h.gvk.Kind, "namespace", namespace, "count", count)
+		totalCount = len(items)
+
+		// Filter by shard if shard selector is specified
+		if shardSelector != nil {
+			// Filter items - keep only objects matching this shard
+			filteredItems := []runtime.Object{}
+			for _, item := range items {
+				obj, ok := item.(client.Object)
+				if !ok {
+					continue
+				}
+
+				matches, err := shardSelector.MatchesObject(obj)
+				if err != nil {
+					h.logger.Error(err, "Shard matching failed", "kind", h.gvk.Kind)
+					continue
+				}
+
+				if matches {
+					filteredItems = append(filteredItems, item)
+				}
+			}
+
+			// Update the list with filtered items
+			if err := meta.SetList(list, filteredItems); err != nil {
+				h.logger.Error(err, "Failed to set filtered list", "kind", h.gvk.Kind)
+				writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to set filtered list: %v", err))
+				return
+			}
+
+			if namespace == "" {
+				h.logger.V(1).Info("Listed with shard filter", "kind", h.gvk.Kind, "scope", "cluster", "shard", shardSelector, "total", totalCount, "filtered", len(filteredItems))
+			} else {
+				h.logger.V(1).Info("Listed with shard filter", "kind", h.gvk.Kind, "namespace", namespace, "shard", shardSelector, "total", totalCount, "filtered", len(filteredItems))
+			}
+		} else {
+			if namespace == "" {
+				h.logger.V(1).Info("Listed", "kind", h.gvk.Kind, "scope", "cluster", "count", totalCount)
+			} else {
+				h.logger.V(1).Info("Listed", "kind", h.gvk.Kind, "namespace", namespace, "count", totalCount)
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

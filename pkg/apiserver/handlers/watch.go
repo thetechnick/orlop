@@ -32,10 +32,11 @@ type watchContext struct {
 	currentResourceVersion string
 	initialBookmarkSent    bool
 	listIsEmpty            bool
+	shardSelector          *ShardSelector
 }
 
 // handleWatch implements the Kubernetes watch protocol
-func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, opts client.ListOptions) {
+func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, opts client.ListOptions, shardSelector *ShardSelector) {
 	params := h.parseWatchParams(r)
 	
 	h.logger.V(1).Info("Watch parameters",
@@ -59,7 +60,7 @@ func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, op
 	}
 
 	// Initialize watch context
-	wctx := h.initWatchContext(w, flusher, opts, params.resourceVersion)
+	wctx := h.initWatchContext(w, flusher, opts, params.resourceVersion, shardSelector)
 
 	// Send initial events if requested
 	if params.sendInitialEvents {
@@ -127,7 +128,7 @@ func (h *ResourceHandler) setupWatchResponse(w http.ResponseWriter) http.Flusher
 }
 
 // initWatchContext initializes the watch context with current state
-func (h *ResourceHandler) initWatchContext(w http.ResponseWriter, flusher http.Flusher, opts client.ListOptions, resourceVersion string) *watchContext {
+func (h *ResourceHandler) initWatchContext(w http.ResponseWriter, flusher http.Flusher, opts client.ListOptions, resourceVersion string, shardSelector *ShardSelector) *watchContext {
 	// Get current resource version and check if list is empty
 	currentRV, isEmpty := h.getCurrentResourceVersion(opts)
 
@@ -145,6 +146,7 @@ func (h *ResourceHandler) initWatchContext(w http.ResponseWriter, flusher http.F
 		currentResourceVersion: currentRV,
 		initialBookmarkSent:    false,
 		listIsEmpty:            isEmpty,
+		shardSelector:          shardSelector,
 	}
 }
 
@@ -167,9 +169,26 @@ func (h *ResourceHandler) sendInitialWatchEvents(wctx *watchContext, opts client
 	}
 
 	items, _ := meta.ExtractList(list)
-	h.logger.V(1).Info("Sending initial events", "count", len(items))
 
+	// Count items and filter by shard
+	sentCount := 0
 	for _, item := range items {
+		// Filter by shard if shard selector is specified
+		if wctx.shardSelector != nil {
+			obj, ok := item.(client.Object)
+			if ok {
+				matches, matchErr := wctx.shardSelector.MatchesObject(obj)
+				if matchErr != nil {
+					wctx.handler.logger.Error(matchErr, "Shard matching failed in initial events")
+					continue
+				}
+				if !matches {
+					// Skip objects not in this shard
+					continue
+				}
+			}
+		}
+
 		watchEvent := map[string]interface{}{
 			"type":   "ADDED",
 			"object": item,
@@ -178,7 +197,10 @@ func (h *ResourceHandler) sendInitialWatchEvents(wctx *watchContext, opts client
 			return
 		}
 		wctx.flusher.Flush()
+		sentCount++
 	}
+
+	h.logger.V(1).Info("Sent initial events", "total", len(items), "sent", sentCount, "shard", wctx.shardSelector)
 
 	// Send bookmark marking end of initial events
 	if allowBookmarks {
@@ -231,6 +253,23 @@ func (h *ResourceHandler) streamWatchEvents(ctx context.Context, wctx *watchCont
 
 			// Update last resource version
 			wctx.lastResourceVersion = event.ResourceVersion
+
+			// Filter by shard if shard selector is specified
+			if wctx.shardSelector != nil {
+				obj, ok := event.Object.(client.Object)
+				if ok {
+					matches, err := wctx.shardSelector.MatchesObject(obj)
+					if err != nil {
+						// Log error but continue watching
+						wctx.handler.logger.Error(err, "Shard matching failed in watch")
+						continue
+					}
+					if !matches {
+						// Object doesn't belong to this shard, skip it
+						continue
+					}
+				}
+			}
 
 			// Send watch event
 			watchEvent := map[string]interface{}{
