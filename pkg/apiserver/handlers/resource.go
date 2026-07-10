@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -201,6 +202,20 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	opts.ShardSelector = shardSelector
+
+	// Parse limit parameter
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		limit, err := strconv.ParseInt(limitStr, 10, 64)
+		if err != nil || limit < 0 {
+			h.logger.V(1).Info("Invalid limit parameter", "error", err)
+			writeError(w, http.StatusBadRequest, "invalid limit parameter")
+			return
+		}
+		opts.Limit = limit
+	}
+
+	// Parse continue token
+	opts.Continue = r.URL.Query().Get("continue")
 
 	// Check if this is a watch request
 	if r.URL.Query().Get("watch") == "true" {

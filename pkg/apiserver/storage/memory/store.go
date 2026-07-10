@@ -2,6 +2,8 @@ package memory
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -149,11 +151,44 @@ func (s *MemoryStore) List(opts storage.ListOptions) (client.ObjectList, error) 
 		}
 	}
 
-	// Collect matching items
-	var items []runtime.Object
-	for key, obj := range s.objects {
+	// Parse continue token if specified
+	var continueToken *storage.ContinueToken
+	if opts.Continue != "" {
+		continueToken, err = storage.DecodeContinueToken(opts.Continue)
+		if err != nil {
+			return nil, fmt.Errorf("invalid continue token: %w", err)
+		}
+	}
+
+	// Collect all matching keys first, then sort for stable pagination
+	var keys []string
+	for key := range s.objects {
 		// Filter by namespace
 		if opts.Namespace != "" && !s.matchesNamespace(key, opts.Namespace) {
+			continue
+		}
+		keys = append(keys, key)
+	}
+
+	// Sort keys for stable ordering (required for pagination)
+	sort.Strings(keys)
+
+	// Collect matching items with pagination support
+	var items []runtime.Object
+	var remainingAfterLimit int
+	limit := opts.Limit
+	if limit == 0 {
+		limit = int64(len(keys)) // No limit means return all
+	}
+
+	for _, key := range keys {
+		obj := s.objects[key]
+
+		// Parse namespace and name from key for continue token comparison
+		namespace, name := s.parseKey(key)
+
+		// Skip items until we pass the continue token position
+		if !storage.ShouldIncludeObject(namespace, name, continueToken) {
 			continue
 		}
 
@@ -175,6 +210,12 @@ func (s *MemoryStore) List(opts storage.ListOptions) (client.ObjectList, error) 
 			}
 		}
 
+		// Check if we've reached the limit
+		if int64(len(items)) >= limit {
+			remainingAfterLimit++
+			continue
+		}
+
 		items = append(items, obj.DeepCopyObject())
 	}
 
@@ -185,6 +226,28 @@ func (s *MemoryStore) List(opts storage.ListOptions) (client.ObjectList, error) 
 
 	// Set list metadata
 	list.SetResourceVersion(s.currentResourceVersion())
+
+	// Set continue token if there are more results
+	if remainingAfterLimit > 0 && len(items) > 0 {
+		listMeta, err := meta.ListAccessor(list)
+		if err == nil {
+			// Get the last item to create continue token
+			lastItem := items[len(items)-1]
+			lastAccessor, err := meta.Accessor(lastItem)
+			if err == nil {
+				token := &storage.ContinueToken{
+					Namespace:       lastAccessor.GetNamespace(),
+					Name:            lastAccessor.GetName(),
+					ResourceVersion: s.currentResourceVersion(),
+				}
+				continueStr, err := storage.EncodeContinueToken(token)
+				if err == nil {
+					listMeta.SetContinue(continueStr)
+					listMeta.SetRemainingItemCount(int64Ptr(int64(remainingAfterLimit)))
+				}
+			}
+		}
+	}
 
 	return list, nil
 }
@@ -283,6 +346,16 @@ func (s *MemoryStore) makeKey(namespace, name string) string {
 func (s *MemoryStore) matchesNamespace(key, namespace string) bool {
 	expectedPrefix := namespace + "/"
 	return len(key) > len(expectedPrefix) && key[:len(expectedPrefix)] == expectedPrefix
+}
+
+// parseKey extracts namespace and name from a storage key.
+func (s *MemoryStore) parseKey(key string) (namespace, name string) {
+	parts := strings.SplitN(key, "/", 2)
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	// No namespace (cluster-scoped)
+	return "", key
 }
 
 // getResourceVersion extracts the resource version from an object.
@@ -390,4 +463,9 @@ func (s *MemoryStore) Watch(opts storage.ListOptions, resourceVersion string) (<
 	}
 
 	return outCh, stopFunc, nil
+}
+
+// int64Ptr returns a pointer to an int64 value.
+func int64Ptr(v int64) *int64 {
+	return &v
 }
