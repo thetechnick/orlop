@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"github.com/thetechnick/orlop/pkg/apiserver/constants"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -65,7 +66,7 @@ func NewConvertingResourceHandler(
 
 // Create handles POST requests to create a new resource.
 func (h *ConvertingResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
-	namespace := chi.URLParam(r, "namespace")
+	namespace := chi.URLParam(r, constants.URLParamNamespace)
 	h.logger.V(1).Info("Create request (converting)", "kind", h.gvk.Kind, "namespace", namespace)
 
 	// Parse request body as map for schema processing
@@ -150,15 +151,15 @@ func (h *ConvertingResourceHandler) Create(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Return public representation
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(responsePublic)
 }
 
 // Get handles GET requests to retrieve a single resource.
 func (h *ConvertingResourceHandler) Get(w http.ResponseWriter, r *http.Request) {
-	namespace := chi.URLParam(r, "namespace")
-	name := chi.URLParam(r, "name")
+	namespace := chi.URLParam(r, constants.URLParamNamespace)
+	name := chi.URLParam(r, constants.URLParamName)
 	h.logger.V(1).Info("Get request (converting)", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Get private object from storage
@@ -182,14 +183,14 @@ func (h *ConvertingResourceHandler) Get(w http.ResponseWriter, r *http.Request) 
 
 	h.logger.V(1).Info("Found (converting)", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(publicObj)
 }
 
 // List handles GET requests to list resources.
 func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request) {
-	namespace := chi.URLParam(r, "namespace")
+	namespace := chi.URLParam(r, constants.URLParamNamespace)
 	if namespace == "" {
 		h.logger.V(1).Info("List request (converting)", "kind", h.gvk.Kind, "scope", "cluster")
 	} else {
@@ -202,12 +203,12 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Parse label selector from query parameter
-	if labelSelectorStr := r.URL.Query().Get("labelSelector"); labelSelectorStr != "" {
+	if labelSelectorStr := r.URL.Query().Get(constants.QueryParamLabelSelector); labelSelectorStr != "" {
 		opts.LabelSelector = labelSelectorStr
 	}
 
 	// Check if this is a watch request
-	if r.URL.Query().Get("watch") == "true" {
+	if r.URL.Query().Get(constants.QueryParamWatch) == "true" {
 		if namespace == "" {
 			h.logger.V(1).Info("Watch request (converting)", "kind", h.gvk.Kind, "scope", "cluster", "uri", r.RequestURI)
 		} else {
@@ -251,7 +252,7 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 	listResponse := map[string]interface{}{
 		"apiVersion": h.gvk.GroupVersion().String(),
 		"kind":       h.gvk.Kind + "List",
-		"metadata": map[string]interface{}{
+		constants.FieldMetadata: map[string]interface{}{
 			"resourceVersion": privateList.GetResourceVersion(),
 		},
 		"items": publicObjects,
@@ -263,7 +264,7 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 		h.logger.V(1).Info("Listed (converting)", "kind", h.gvk.Kind, "namespace", namespace, "count", len(publicObjects))
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(listResponse)
 }
@@ -271,13 +272,13 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 // handleWatch handles watch requests using streaming JSON.
 func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, opts storage.ListOptions) {
 	// Get resourceVersion to start from
-	resourceVersion := r.URL.Query().Get("resourceVersion")
+	resourceVersion := r.URL.Query().Get(constants.QueryParamResourceVersion)
 
 	// Parse watch parameters
-	allowWatchBookmarks := r.URL.Query().Get("allowWatchBookmarks") == "true"
-	sendInitialEvents := r.URL.Query().Get("sendInitialEvents") == "true"
-	resourceVersionMatch := r.URL.Query().Get("resourceVersionMatch")
-	timeoutSeconds := r.URL.Query().Get("timeoutSeconds")
+	allowWatchBookmarks := r.URL.Query().Get(constants.QueryParamAllowWatchBookmarks) == "true"
+	sendInitialEvents := r.URL.Query().Get(constants.QueryParamSendInitialEvents) == "true"
+	resourceVersionMatch := r.URL.Query().Get(constants.QueryParamResourceVersionMatch)
+	timeoutSeconds := r.URL.Query().Get(constants.QueryParamTimeoutSeconds)
 
 	h.logger.V(1).Info("Watch parameters (converting)",
 		allowWatchBookmarks, sendInitialEvents, resourceVersionMatch, timeoutSeconds)
@@ -301,8 +302,8 @@ func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.R
 	defer stop()
 
 	// Set headers for streaming
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Transfer-Encoding", "chunked")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
+	w.Header().Set(constants.HeaderTransferEncoding, constants.TransferEncodingChunked)
 	w.WriteHeader(http.StatusOK)
 
 	// Get flusher for streaming
@@ -373,10 +374,10 @@ func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.R
 			bookmarkObj := map[string]interface{}{
 				"apiVersion": h.gvk.GroupVersion().String(),
 				"kind":       h.gvk.Kind,
-				"metadata": map[string]interface{}{
+				constants.FieldMetadata: map[string]interface{}{
 					"resourceVersion": lastResourceVersion,
 					"annotations": map[string]interface{}{
-						"k8s.io/initial-events-end": "true",
+						constants.AnnotationInitialEventsEnd: "true",
 					},
 				},
 			}
@@ -403,7 +404,7 @@ func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.R
 		bookmarkObj := map[string]interface{}{
 			"apiVersion": h.gvk.GroupVersion().String(),
 			"kind":       h.gvk.Kind,
-			"metadata": map[string]interface{}{
+			constants.FieldMetadata: map[string]interface{}{
 				"resourceVersion": lastResourceVersion,
 			},
 		}
@@ -430,7 +431,7 @@ func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.R
 			bookmarkObj := map[string]interface{}{
 				"apiVersion": h.gvk.GroupVersion().String(),
 				"kind":       h.gvk.Kind,
-				"metadata": map[string]interface{}{
+				constants.FieldMetadata: map[string]interface{}{
 					"resourceVersion": lastResourceVersion,
 				},
 			}
@@ -481,7 +482,7 @@ func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.R
 					bookmarkObj := map[string]interface{}{
 						"apiVersion": h.gvk.GroupVersion().String(),
 						"kind":       h.gvk.Kind,
-						"metadata": map[string]interface{}{
+						constants.FieldMetadata: map[string]interface{}{
 							"resourceVersion": lastResourceVersion,
 						},
 					}
@@ -502,8 +503,8 @@ func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.R
 
 // Update handles PUT requests to update a resource.
 func (h *ConvertingResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
-	namespace := chi.URLParam(r, "namespace")
-	name := chi.URLParam(r, "name")
+	namespace := chi.URLParam(r, constants.URLParamNamespace)
+	name := chi.URLParam(r, constants.URLParamName)
 	h.logger.V(1).Info("Update request (converting)", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Get existing private object
@@ -589,16 +590,16 @@ func (h *ConvertingResourceHandler) Update(w http.ResponseWriter, r *http.Reques
 	// Convert back to public for response
 	responsePublic, _ := h.converter.PrivateToPublic(privateObj)
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(responsePublic)
 }
 
 // Patch handles PATCH requests to partially update a resource.
 func (h *ConvertingResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
-	namespace := chi.URLParam(r, "namespace")
-	name := chi.URLParam(r, "name")
-	contentType := r.Header.Get("Content-Type")
+	namespace := chi.URLParam(r, constants.URLParamNamespace)
+	name := chi.URLParam(r, constants.URLParamName)
+	contentType := r.Header.Get(constants.HeaderContentType)
 	h.logger.V(1).Info("[PATCH-CONVERTING] %s namespace=%s name=%s content-type=%s", h.gvk.Kind, namespace, name, contentType)
 
 	// Get existing private object
@@ -712,15 +713,15 @@ func (h *ConvertingResourceHandler) Patch(w http.ResponseWriter, r *http.Request
 	// Convert back to public for response
 	responsePublic, _ := h.converter.PrivateToPublic(privateObj)
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(responsePublic)
 }
 
 // Delete handles DELETE requests to delete a resource.
 func (h *ConvertingResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	namespace := chi.URLParam(r, "namespace")
-	name := chi.URLParam(r, "name")
+	namespace := chi.URLParam(r, constants.URLParamNamespace)
+	name := chi.URLParam(r, constants.URLParamName)
 	h.logger.V(1).Info("[DELETE-CONVERTING] %s namespace=%s name=%s", h.gvk.Kind, namespace, name)
 
 	if err := h.store.Delete(namespace, name); err != nil {
@@ -738,22 +739,22 @@ func (h *ConvertingResourceHandler) Delete(w http.ResponseWriter, r *http.Reques
 	// Return success status
 	status := metav1.Status{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "Status",
+			APIVersion: constants.APIVersionV1,
+			Kind:       constants.KindStatus,
 		},
 		Status: metav1.StatusSuccess,
 		Code:   http.StatusOK,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(status)
 }
 
 // UpdateStatus handles PUT requests to update only the status subresource.
 func (h *ConvertingResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
-	namespace := chi.URLParam(r, "namespace")
-	name := chi.URLParam(r, "name")
+	namespace := chi.URLParam(r, constants.URLParamNamespace)
+	name := chi.URLParam(r, constants.URLParamName)
 	h.logger.V(1).Info("[UPDATE-STATUS-CONVERTING] %s namespace=%s name=%s", h.gvk.Kind, namespace, name)
 
 	// Parse request body
@@ -832,7 +833,7 @@ func (h *ConvertingResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.
 	// Convert to public for response
 	responsePublic, _ := h.converter.PrivateToPublic(updatedPrivate)
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(responsePublic)
 }

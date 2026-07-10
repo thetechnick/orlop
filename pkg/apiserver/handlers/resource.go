@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"github.com/thetechnick/orlop/pkg/apiserver/constants"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -65,7 +66,7 @@ func (h *ResourceHandler) SetApplyManager(applyMgr *apply.Manager) {
 
 // Create handles POST requests to create a new resource.
 func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
-	namespace := chi.URLParam(r, "namespace")
+	namespace := chi.URLParam(r, constants.URLParamNamespace)
 	h.logger.V(1).Info("Create request", "kind", h.gvk.Kind, "namespace", namespace)
 
 	// Parse request body as map for schema processing
@@ -136,15 +137,15 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info("Created", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Return created object
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(clientObj)
 }
 
 // Get handles GET requests to retrieve a single resource.
 func (h *ResourceHandler) Get(w http.ResponseWriter, r *http.Request) {
-	namespace := chi.URLParam(r, "namespace")
-	name := chi.URLParam(r, "name")
+	namespace := chi.URLParam(r, constants.URLParamNamespace)
+	name := chi.URLParam(r, constants.URLParamName)
 	h.logger.V(1).Info("Get request", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	obj, err := h.store.Get(namespace, name)
@@ -160,14 +161,14 @@ func (h *ResourceHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	h.logger.V(1).Info("Found", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(obj)
 }
 
 // List handles GET requests to list resources.
 func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
-	namespace := chi.URLParam(r, "namespace")
+	namespace := chi.URLParam(r, constants.URLParamNamespace)
 	if namespace == "" {
 		h.logger.V(1).Info("List request", "kind", h.gvk.Kind, "scope", "cluster")
 	} else {
@@ -180,7 +181,7 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse label selector from query parameter
-	if labelSelectorStr := r.URL.Query().Get("labelSelector"); labelSelectorStr != "" {
+	if labelSelectorStr := r.URL.Query().Get(constants.QueryParamLabelSelector); labelSelectorStr != "" {
 		// Validate label selector syntax before passing to storage
 		_, err := labels.Parse(labelSelectorStr)
 		if err != nil {
@@ -193,8 +194,8 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	// Parse shard selector from query parameters
 	shardSelector, err := storage.ParseShardSelector(
-		r.URL.Query().Get("shardIndex"),
-		r.URL.Query().Get("shardCount"),
+		r.URL.Query().Get(constants.QueryParamShardIndex),
+		r.URL.Query().Get(constants.QueryParamShardCount),
 	)
 	if err != nil {
 		h.logger.V(1).Info("Invalid shard selector", "error", err)
@@ -204,7 +205,7 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	opts.ShardSelector = shardSelector
 
 	// Parse limit parameter
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+	if limitStr := r.URL.Query().Get(constants.QueryParamLimit); limitStr != "" {
 		limit, err := strconv.ParseInt(limitStr, 10, 64)
 		if err != nil || limit < 0 {
 			h.logger.V(1).Info("Invalid limit parameter", "error", err)
@@ -215,10 +216,10 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse continue token
-	opts.Continue = r.URL.Query().Get("continue")
+	opts.Continue = r.URL.Query().Get(constants.QueryParamContinue)
 
 	// Check if this is a watch request
-	if r.URL.Query().Get("watch") == "true" {
+	if r.URL.Query().Get(constants.QueryParamWatch) == "true" {
 		if namespace == "" {
 			h.logger.V(1).Info("Watch request", "kind", h.gvk.Kind, "scope", "cluster", "shard", shardSelector, "uri", r.RequestURI)
 		} else {
@@ -264,7 +265,7 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(list)
 }
@@ -273,8 +274,8 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // Update handles PUT requests to update a resource.
 func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
-	namespace := chi.URLParam(r, "namespace")
-	name := chi.URLParam(r, "name")
+	namespace := chi.URLParam(r, constants.URLParamNamespace)
+	name := chi.URLParam(r, constants.URLParamName)
 	h.logger.V(1).Info("Update request", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Get existing object to compare spec
@@ -354,14 +355,14 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 			// Return success status for deletion
 			status := metav1.Status{
 				TypeMeta: metav1.TypeMeta{
-					APIVersion: "v1",
-					Kind:       "Status",
+					APIVersion: constants.APIVersionV1,
+					Kind:       constants.KindStatus,
 				},
 				Status: metav1.StatusSuccess,
 				Code:   http.StatusOK,
 			}
 
-			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(status)
 			return
@@ -394,7 +395,7 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info("Updated", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Return updated object
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(clientObj)
 }
@@ -404,8 +405,8 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 // ApplyPatch handles server-side apply PATCH requests.
 // This implements the Kubernetes server-side apply protocol with field ownership tracking.
 func (h *ResourceHandler) ApplyPatch(w http.ResponseWriter, r *http.Request) {
-	namespace := chi.URLParam(r, "namespace")
-	name := chi.URLParam(r, "name")
+	namespace := chi.URLParam(r, constants.URLParamNamespace)
+	name := chi.URLParam(r, constants.URLParamName)
 
 	h.logger.V(1).Info("Apply request", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
@@ -416,14 +417,14 @@ func (h *ResourceHandler) ApplyPatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract field manager from query parameters (required)
-	fieldManager := r.URL.Query().Get("fieldManager")
+	fieldManager := r.URL.Query().Get(constants.QueryParamFieldManager)
 	if fieldManager == "" {
 		writeError(w, http.StatusBadRequest, "fieldManager query parameter is required for server-side apply")
 		return
 	}
 
 	// Extract force parameter (optional, defaults to false)
-	force := r.URL.Query().Get("force") == "true"
+	force := r.URL.Query().Get(constants.QueryParamForce) == "true"
 
 	// Read apply configuration body
 	applyBytes, err := io.ReadAll(r.Body)
@@ -471,7 +472,7 @@ func (h *ResourceHandler) ApplyPatch(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Return created object
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(result)
 		h.logger.Info("Created via apply", "namespace", namespace, "name", name, "fieldManager", fieldManager)
@@ -483,7 +484,7 @@ func (h *ResourceHandler) ApplyPatch(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Return updated object
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(result)
 		h.logger.Info("Updated via apply", "namespace", namespace, "name", name, "fieldManager", fieldManager, "force", force)
@@ -495,8 +496,8 @@ func (h *ResourceHandler) ApplyPatch(w http.ResponseWriter, r *http.Request) {
 // 1. If object has finalizers, set deletionTimestamp and update (soft delete)
 // 2. If object has no finalizers or deletionTimestamp is already set, delete immediately
 func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	namespace := chi.URLParam(r, "namespace")
-	name := chi.URLParam(r, "name")
+	namespace := chi.URLParam(r, constants.URLParamNamespace)
+	name := chi.URLParam(r, constants.URLParamName)
 	h.logger.V(1).Info("Delete request", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Get the existing object to check for finalizers
@@ -519,7 +520,7 @@ func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	// Parse propagation policy from query parameter
 	// Values: Orphan, Background (default), Foreground
-	propagationPolicy := r.URL.Query().Get("propagationPolicy")
+	propagationPolicy := r.URL.Query().Get(constants.QueryParamPropagationPolicy)
 	if propagationPolicy == "" {
 		propagationPolicy = "Background"
 	}
@@ -578,7 +579,7 @@ func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Return the object with deletionTimestamp (whether just set or already present)
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(existing)
 		return
@@ -600,14 +601,14 @@ func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// Return success status
 	status := metav1.Status{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "Status",
+			APIVersion: constants.APIVersionV1,
+			Kind:       constants.KindStatus,
 		},
 		Status: metav1.StatusSuccess,
 		Code:   http.StatusOK,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(status)
 }

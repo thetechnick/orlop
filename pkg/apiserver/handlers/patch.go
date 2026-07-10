@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"github.com/thetechnick/orlop/pkg/apiserver/constants"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,13 +21,13 @@ import (
 // - Strategic Merge Patch (Kubernetes)
 // - Server-Side Apply
 func (h *ResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
-	namespace := chi.URLParam(r, "namespace")
-	name := chi.URLParam(r, "name")
-	contentType := r.Header.Get("Content-Type")
+	namespace := chi.URLParam(r, constants.URLParamNamespace)
+	name := chi.URLParam(r, constants.URLParamName)
+	contentType := r.Header.Get(constants.HeaderContentType)
 	h.logger.V(1).Info("Patch request", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "contentType", contentType)
 
 	// Check if this is a server-side apply request
-	if strings.HasPrefix(contentType, "application/apply-patch+") {
+	if strings.HasPrefix(contentType, constants.ContentTypeApplyPatchPrefix) {
 		h.ApplyPatch(w, r)
 		return
 	}
@@ -73,19 +74,19 @@ func (h *ResourceHandler) applyPatch(contentType string, existing client.Object,
 	var err error
 
 	switch contentType {
-	case "application/json-patch+json":
+	case constants.ContentTypeJSONPatch:
 		// JSON Patch (RFC 6902)
 		patchedJSON, err = h.jsonPatch(existingJSON, patchBytes)
 		if err != nil {
 			return nil, fmt.Errorf("json patch failed: %v", err)
 		}
-	case "application/merge-patch+json":
+	case constants.ContentTypeMergePatch:
 		// JSON Merge Patch (RFC 7386)
 		patchedJSON, err = jsonMergePatch(existingJSON, patchBytes)
 		if err != nil {
 			return nil, fmt.Errorf("merge patch failed: %v", err)
 		}
-	case "application/strategic-merge-patch+json":
+	case constants.ContentTypeStrategicMergePatch:
 		// Strategic Merge Patch (Kubernetes default)
 		patchedJSON, err = h.strategicMergePatch(existing, patchBytes)
 		if err != nil {
@@ -146,7 +147,7 @@ func (h *ResourceHandler) processPatchedObject(w http.ResponseWriter, namespace,
 	h.logger.Info("Patched", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Return updated object
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(clientObj)
 }

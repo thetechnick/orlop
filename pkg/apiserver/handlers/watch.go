@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"github.com/thetechnick/orlop/pkg/apiserver/constants"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -111,8 +112,8 @@ func (h *ResourceHandler) applyWatchTimeout(ctx context.Context, timeoutSeconds 
 
 // setupWatchResponse configures HTTP headers for streaming and returns the flusher
 func (h *ResourceHandler) setupWatchResponse(w http.ResponseWriter) http.Flusher {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Transfer-Encoding", "chunked")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
+	w.Header().Set(constants.HeaderTransferEncoding, constants.TransferEncodingChunked)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -191,7 +192,7 @@ func (h *ResourceHandler) sendInitialResourceEvents(wctx *watchContext, opts sto
 	// Send bookmark marking end of initial events
 	if allowBookmarks {
 		wctx.sendBookmark(map[string]interface{}{
-			"k8s.io/initial-events-end": "true",
+			constants.AnnotationInitialEventsEnd: "true",
 		})
 		wctx.initialBookmarkSent = true
 	}
@@ -278,7 +279,7 @@ func (wctx *watchContext) sendBookmark(annotations map[string]interface{}) {
 	bookmarkObj := map[string]interface{}{
 		"apiVersion": wctx.handler.gvk.GroupVersion().String(),
 		"kind":       wctx.handler.gvk.Kind,
-		"metadata":   metadata,
+		constants.FieldMetadata:   metadata,
 	}
 
 	watchEvent := map[string]interface{}{

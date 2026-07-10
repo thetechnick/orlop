@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"github.com/thetechnick/orlop/pkg/apiserver/constants"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,8 +14,8 @@ import (
 
 // UpdateStatus handles PUT requests to update only the status subresource.
 func (h *ResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
-	namespace := chi.URLParam(r, "namespace")
-	name := chi.URLParam(r, "name")
+	namespace := chi.URLParam(r, constants.URLParamNamespace)
+	name := chi.URLParam(r, constants.URLParamName)
 	h.logger.V(1).Info("Update status request", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Parse request body
@@ -91,7 +92,7 @@ func (h *ResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	h.logger.Info("Updated status", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Return updated object
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(clientObj)
 }

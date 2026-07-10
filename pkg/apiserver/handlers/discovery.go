@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"github.com/thetechnick/orlop/pkg/apiserver/constants"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -52,7 +53,7 @@ func (h *DiscoveryHandler) APIGroupList(w http.ResponseWriter, r *http.Request) 
 			groups[group] = &metav1.APIGroup{
 				TypeMeta: metav1.TypeMeta{
 					Kind:       "APIGroup",
-					APIVersion: "v1",
+					APIVersion: constants.APIVersionV1,
 				},
 				Name:     group,
 				Versions: []metav1.GroupVersionForDiscovery{},
@@ -85,7 +86,7 @@ func (h *DiscoveryHandler) APIGroupList(w http.ResponseWriter, r *http.Request) 
 	groupList := &metav1.APIGroupList{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "APIGroupList",
-			APIVersion: "v1",
+			APIVersion: constants.APIVersionV1,
 		},
 		Groups: make([]metav1.APIGroup, 0, len(groups)),
 	}
@@ -94,7 +95,7 @@ func (h *DiscoveryHandler) APIGroupList(w http.ResponseWriter, r *http.Request) 
 		groupList.Groups = append(groupList.Groups, *group)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(groupList)
 }
@@ -106,7 +107,7 @@ func (h *DiscoveryHandler) APIGroup(w http.ResponseWriter, r *http.Request, grou
 	apiGroup := &metav1.APIGroup{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "APIGroup",
-			APIVersion: "v1",
+			APIVersion: constants.APIVersionV1,
 		},
 		Name:     group,
 		Versions: []metav1.GroupVersionForDiscovery{},
@@ -135,7 +136,7 @@ func (h *DiscoveryHandler) APIGroup(w http.ResponseWriter, r *http.Request, grou
 	// Set preferred version (first one)
 	apiGroup.PreferredVersion = apiGroup.Versions[0]
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(apiGroup)
 }
@@ -147,7 +148,7 @@ func (h *DiscoveryHandler) APIResourceList(w http.ResponseWriter, r *http.Reques
 	resourceList := &metav1.APIResourceList{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "APIResourceList",
-			APIVersion: "v1",
+			APIVersion: constants.APIVersionV1,
 		},
 		GroupVersion: group + "/" + version,
 		APIResources: []metav1.APIResource{},
@@ -184,7 +185,7 @@ func (h *DiscoveryHandler) APIResourceList(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(resourceList)
 }
@@ -212,7 +213,7 @@ func (h *DiscoveryHandler) OpenAPIV3(w http.ResponseWriter, r *http.Request) {
 		"paths": paths,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
 }
@@ -294,7 +295,7 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 					"200": map[string]interface{}{
 						"description": "OK",
 						"content": map[string]interface{}{
-							"application/json": map[string]interface{}{
+							constants.ContentTypeJSON: map[string]interface{}{
 								"schema": map[string]interface{}{
 									"$ref": schemaRef,
 								},
@@ -309,7 +310,7 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 					"201": map[string]interface{}{
 						"description": "Created",
 						"content": map[string]interface{}{
-							"application/json": map[string]interface{}{
+							constants.ContentTypeJSON: map[string]interface{}{
 								"schema": map[string]interface{}{
 									"$ref": schemaRef,
 								},
@@ -330,7 +331,7 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 					"200": map[string]interface{}{
 						"description": "OK",
 						"content": map[string]interface{}{
-							"application/json": map[string]interface{}{
+							constants.ContentTypeJSON: map[string]interface{}{
 								"schema": map[string]interface{}{
 									"$ref": schemaRef,
 								},
@@ -345,7 +346,7 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 					"200": map[string]interface{}{
 						"description": "OK",
 						"content": map[string]interface{}{
-							"application/json": map[string]interface{}{
+							constants.ContentTypeJSON: map[string]interface{}{
 								"schema": map[string]interface{}{
 									"$ref": schemaRef,
 								},
@@ -374,7 +375,7 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 					"200": map[string]interface{}{
 						"description": "OK",
 						"content": map[string]interface{}{
-							"application/json": map[string]interface{}{
+							constants.ContentTypeJSON: map[string]interface{}{
 								"schema": map[string]interface{}{
 									"$ref": schemaRef,
 								},
@@ -389,7 +390,7 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 					"200": map[string]interface{}{
 						"description": "OK",
 						"content": map[string]interface{}{
-							"application/json": map[string]interface{}{
+							constants.ContentTypeJSON: map[string]interface{}{
 								"schema": map[string]interface{}{
 									"$ref": schemaRef,
 								},
@@ -410,7 +411,7 @@ func (h *DiscoveryHandler) OpenAPIV3GroupVersion(w http.ResponseWriter, r *http.
 		"schemas": schemas,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(spec)
 }
@@ -468,7 +469,7 @@ func (h *DiscoveryHandler) buildOpenAPIV2Spec() *openapispec.Swagger {
 				"get": map[string]interface{}{
 					"description": fmt.Sprintf("list objects of kind %s", res.GVK.Kind),
 					"operationId": fmt.Sprintf("list%s%s", res.GVK.Version, res.GVK.Kind),
-					"produces":    []string{"application/json"},
+					"produces":    []string{constants.ContentTypeJSON},
 					"parameters": []interface{}{
 						map[string]interface{}{
 							"name":        "namespace",
@@ -508,8 +509,8 @@ func (h *DiscoveryHandler) buildOpenAPIV2Spec() *openapispec.Swagger {
 				"post": map[string]interface{}{
 					"description": fmt.Sprintf("create a %s", res.GVK.Kind),
 					"operationId": fmt.Sprintf("create%s%s", res.GVK.Version, res.GVK.Kind),
-					"produces":    []string{"application/json"},
-					"consumes":    []string{"application/json"},
+					"produces":    []string{constants.ContentTypeJSON},
+					"consumes":    []string{constants.ContentTypeJSON},
 					"parameters": []interface{}{
 						map[string]interface{}{
 							"name":     "namespace",
@@ -543,7 +544,7 @@ func (h *DiscoveryHandler) buildOpenAPIV2Spec() *openapispec.Swagger {
 				"get": map[string]interface{}{
 					"description": fmt.Sprintf("read the specified %s", res.GVK.Kind),
 					"operationId": fmt.Sprintf("read%s%s", res.GVK.Version, res.GVK.Kind),
-					"produces":    []string{"application/json"},
+					"produces":    []string{constants.ContentTypeJSON},
 					"parameters": []interface{}{
 						map[string]interface{}{
 							"name":     "namespace",
@@ -571,8 +572,8 @@ func (h *DiscoveryHandler) buildOpenAPIV2Spec() *openapispec.Swagger {
 				"put": map[string]interface{}{
 					"description": fmt.Sprintf("replace the specified %s", res.GVK.Kind),
 					"operationId": fmt.Sprintf("replace%s%s", res.GVK.Version, res.GVK.Kind),
-					"produces":    []string{"application/json"},
-					"consumes":    []string{"application/json"},
+					"produces":    []string{constants.ContentTypeJSON},
+					"consumes":    []string{constants.ContentTypeJSON},
 					"parameters": []interface{}{
 						map[string]interface{}{
 							"name":     "namespace",
@@ -607,7 +608,7 @@ func (h *DiscoveryHandler) buildOpenAPIV2Spec() *openapispec.Swagger {
 				"delete": map[string]interface{}{
 					"description": fmt.Sprintf("delete a %s", res.GVK.Kind),
 					"operationId": fmt.Sprintf("delete%s%s", res.GVK.Version, res.GVK.Kind),
-					"produces":    []string{"application/json"},
+					"produces":    []string{constants.ContentTypeJSON},
 					"parameters": []interface{}{
 						map[string]interface{}{
 							"name":     "namespace",
@@ -636,7 +637,7 @@ func (h *DiscoveryHandler) buildOpenAPIV2Spec() *openapispec.Swagger {
 				"get": map[string]interface{}{
 					"description": fmt.Sprintf("read status of the specified %s", res.GVK.Kind),
 					"operationId": fmt.Sprintf("read%s%sStatus", res.GVK.Version, res.GVK.Kind),
-					"produces":    []string{"application/json"},
+					"produces":    []string{constants.ContentTypeJSON},
 					"parameters": []interface{}{
 						map[string]interface{}{
 							"name":     "namespace",
@@ -663,8 +664,8 @@ func (h *DiscoveryHandler) buildOpenAPIV2Spec() *openapispec.Swagger {
 				"put": map[string]interface{}{
 					"description": fmt.Sprintf("replace status of the specified %s", res.GVK.Kind),
 					"operationId": fmt.Sprintf("replace%s%sStatus", res.GVK.Version, res.GVK.Kind),
-					"produces":    []string{"application/json"},
-					"consumes":    []string{"application/json"},
+					"produces":    []string{constants.ContentTypeJSON},
+					"consumes":    []string{constants.ContentTypeJSON},
 					"parameters": []interface{}{
 						map[string]interface{}{
 							"name":     "namespace",
@@ -749,7 +750,7 @@ func (h *DiscoveryHandler) OpenAPIV2(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse Accept header to determine response format
-	accept := r.Header.Get("Accept")
+	accept := r.Header.Get(constants.HeaderAccept)
 	if accept == "" {
 		accept = "*/*"
 	}
@@ -761,20 +762,20 @@ func (h *DiscoveryHandler) OpenAPIV2(w http.ResponseWriter, r *http.Request) {
 		ReturnedContentType string
 		Data                []byte
 	}{
-		{"application", "json", "application/json", h.v2JSONCache},
+		{"application", "json", constants.ContentTypeJSON, h.v2JSONCache},
 		{"application", "com.github.proto-openapi.spec.v2@v1.0+protobuf", "application/com.github.proto-openapi.spec.v2.v1.0+protobuf", h.v2ProtoCache},
 		{"application", "com.github.proto-openapi.spec.v2.v1.0+protobuf", "application/com.github.proto-openapi.spec.v2.v1.0+protobuf", h.v2ProtoCache},
 	}
 
 	clauses := goautoneg.ParseAccept(accept)
-	w.Header().Add("Vary", "Accept")
+	w.Header().Add(constants.HeaderVary, constants.HeaderAccept)
 
 	for _, clause := range clauses {
 		for _, a := range accepted {
 			if (clause.Type == a.Type || clause.Type == "*") &&
 				(clause.SubType == a.SubType || clause.SubType == "*") {
-				w.Header().Set("Content-Type", a.ReturnedContentType)
-				w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+				w.Header().Set(constants.HeaderContentType, a.ReturnedContentType)
+				w.Header().Set(constants.HeaderLastModified, time.Now().UTC().Format(http.TimeFormat))
 				w.WriteHeader(http.StatusOK)
 				w.Write(a.Data)
 				return

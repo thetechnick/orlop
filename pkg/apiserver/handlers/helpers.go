@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"github.com/thetechnick/orlop/pkg/apiserver/constants"
 	"encoding/json"
 	"net/http"
 
@@ -12,15 +13,15 @@ import (
 func writeError(w http.ResponseWriter, code int, message string) {
 	status := metav1.Status{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "Status",
+			APIVersion: constants.APIVersionV1,
+			Kind:       constants.KindStatus,
 		},
 		Status:  metav1.StatusFailure,
 		Message: message,
 		Code:    int32(code),
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(constants.HeaderContentType, constants.ContentTypeJSON)
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(status)
 }
