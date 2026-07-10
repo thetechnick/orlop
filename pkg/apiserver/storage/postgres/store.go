@@ -296,6 +296,32 @@ func (s *PostgresStore) List(opts storage.ListOptions) (client.ObjectList, error
 		}
 	}
 
+	// Apply shard selector using PostgreSQL SHA-256 hash
+	if opts.ShardSelector != nil {
+		// Replicate the Go shard computation logic in SQL:
+		// 1. Concatenate namespace + "/" + name
+		// 2. SHA-256 hash the result
+		// 3. Take first 8 bytes as big-endian uint64
+		// 4. Modulo by shard count
+		// 5. Check if equals shard index
+		//
+		// PostgreSQL: get_byte(sha256(...), 0) gets the first byte
+		// We need to reconstruct the uint64 from 8 bytes in big-endian order
+		query += fmt.Sprintf(`
+			AND (
+				(get_byte(sha256((namespace || '/' || name)::bytea), 0)::bigint << 56) |
+				(get_byte(sha256((namespace || '/' || name)::bytea), 1)::bigint << 48) |
+				(get_byte(sha256((namespace || '/' || name)::bytea), 2)::bigint << 40) |
+				(get_byte(sha256((namespace || '/' || name)::bytea), 3)::bigint << 32) |
+				(get_byte(sha256((namespace || '/' || name)::bytea), 4)::bigint << 24) |
+				(get_byte(sha256((namespace || '/' || name)::bytea), 5)::bigint << 16) |
+				(get_byte(sha256((namespace || '/' || name)::bytea), 6)::bigint << 8) |
+				get_byte(sha256((namespace || '/' || name)::bytea), 7)::bigint
+			) %% $%d = $%d`, argNum, argNum+1)
+		args = append(args, opts.ShardSelector.Count, opts.ShardSelector.Index)
+		argNum += 2
+	}
+
 	// Apply continue token for pagination
 	if opts.Continue != "" {
 		continueToken, err := storage.DecodeContinueToken(opts.Continue)
@@ -361,13 +387,8 @@ func (s *PostgresStore) List(opts storage.ListOptions) (client.ObjectList, error
 			return nil, fmt.Errorf("failed to unmarshal object: %w", err)
 		}
 
-		// Apply shard filter (this uses SHA-256 hash, can't be done efficiently in SQL)
-		if opts.ShardSelector != nil {
-			matches, err := storage.MatchesShard(obj, opts.ShardSelector)
-			if err != nil || !matches {
-				continue
-			}
-		}
+		// Shard filtering is now done at the database level via SQL
+		// No need to filter in-memory
 
 		items = append(items, *obj)
 
