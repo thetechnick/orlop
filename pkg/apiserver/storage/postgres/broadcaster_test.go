@@ -65,7 +65,7 @@ func TestPostgresBroadcaster_Broadcast(t *testing.T) {
 
 		// Broadcast event
 		obj := newTestObject(withName("test"), withNamespace("default"))
-		event := storage.WatchEvent{
+		event := storage.ResourceEvent{
 			Type:            "ADDED",
 			Object:          obj,
 			ResourceVersion: "1",
@@ -92,7 +92,7 @@ func TestPostgresBroadcaster_Broadcast(t *testing.T) {
 		defer cleanup()
 
 		obj := newTestObject(withName("test"), withNamespace("default"))
-		event := storage.WatchEvent{
+		event := storage.ResourceEvent{
 			Type:            "MODIFIED",
 			Object:          obj,
 			ResourceVersion: "5",
@@ -132,7 +132,7 @@ func TestPostgresBroadcaster_Broadcast(t *testing.T) {
 
 		// Broadcast event
 		obj := newTestObject(withName("test"), withNamespace("default"))
-		event := storage.WatchEvent{
+		event := storage.ResourceEvent{
 			Type:            "DELETED",
 			Object:          obj,
 			ResourceVersion: "10",
@@ -219,7 +219,7 @@ func TestPostgresBroadcaster_HistoricalEvents(t *testing.T) {
 		// Broadcast some events first
 		for i := 1; i <= 3; i++ {
 			obj := newTestObject(withName("test"), withNamespace("default"))
-			event := storage.WatchEvent{
+			event := storage.ResourceEvent{
 				Type:            "ADDED",
 				Object:          obj,
 				ResourceVersion: string(rune('0' + i)),
@@ -322,7 +322,7 @@ func TestPostgresBroadcaster_PruneOldEvents(t *testing.T) {
 		}
 
 		// Insert recent event
-		broadcaster.Broadcast(storage.WatchEvent{
+		broadcaster.Broadcast(storage.ResourceEvent{
 			Type:            "ADDED",
 			Object:          newTestObject(withName("recent"), withNamespace("default")),
 			ResourceVersion: "2",
@@ -433,7 +433,7 @@ func TestPostgresBroadcaster_MultiInstance(t *testing.T) {
 
 		// Broadcast from instance 1
 		obj := newTestObject(withName("test"), withNamespace("default"))
-		event := storage.WatchEvent{
+		event := storage.ResourceEvent{
 			Type:            "ADDED",
 			Object:          obj,
 			ResourceVersion: "1",

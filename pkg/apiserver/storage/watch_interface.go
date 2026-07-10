@@ -11,17 +11,17 @@ import (
 type EventBroadcaster interface {
 	// Broadcast sends an event to all active watchers.
 	// Implementations should be non-blocking and handle slow consumers.
-	Broadcast(event WatchEvent)
+	Broadcast(event ResourceEvent)
 
 	// Subscribe creates a new watch starting from the given resource version.
 	// Returns:
-	// - A channel that receives WatchEvent
+	// - A channel that receives ResourceEvent
 	// - A stop function to end the watch and clean up resources
 	// - An error if the watch cannot be created
 	//
 	// If sinceResourceVersion is provided, implementations should send
 	// historical events that occurred after that version, if available.
-	Subscribe(sinceResourceVersion string) (<-chan WatchEvent, func(), error)
+	Subscribe(sinceResourceVersion string) (<-chan ResourceEvent, func(), error)
 
 	// Close shuts down the broadcaster and all active subscriptions.
 	Close() error
@@ -34,14 +34,14 @@ type EventBroadcasterFactory func() EventBroadcaster
 // WatchFilter filters watch events based on client options.
 type WatchFilter interface {
 	// Matches returns true if the event should be sent to the watcher.
-	Matches(event WatchEvent, opts client.ListOptions) bool
+	Matches(event ResourceEvent, opts client.ListOptions) bool
 }
 
 // DefaultWatchFilter implements filtering based on namespace and label selector.
 type DefaultWatchFilter struct{}
 
 // Matches implements WatchFilter interface.
-func (f *DefaultWatchFilter) Matches(event WatchEvent, opts client.ListOptions) bool {
+func (f *DefaultWatchFilter) Matches(event ResourceEvent, opts client.ListOptions) bool {
 	// BOOKMARK events always pass through
 	if event.Type == "BOOKMARK" {
 		return true

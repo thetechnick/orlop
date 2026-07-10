@@ -13,7 +13,7 @@ import (
 // WatchBuffer stores recent events for a resource type to allow watch synchronization.
 type WatchBuffer struct {
 	mu     sync.RWMutex
-	events *ring.Ring // Circular buffer of storage.WatchEvent
+	events *ring.Ring // Circular buffer of storage.ResourceEvent
 	size   int
 }
 
@@ -26,7 +26,7 @@ func NewWatchBuffer(size int) *WatchBuffer {
 }
 
 // Add adds an event to the buffer.
-func (wb *WatchBuffer) Add(event storage.WatchEvent) {
+func (wb *WatchBuffer) Add(event storage.ResourceEvent) {
 	wb.mu.Lock()
 	defer wb.mu.Unlock()
 
@@ -36,7 +36,7 @@ func (wb *WatchBuffer) Add(event storage.WatchEvent) {
 
 // GetEventsSince returns all events since the given resource version.
 // Returns nil if the requested version is too old (not in buffer).
-func (wb *WatchBuffer) GetEventsSince(resourceVersion string) ([]storage.WatchEvent, error) {
+func (wb *WatchBuffer) GetEventsSince(resourceVersion string) ([]storage.ResourceEvent, error) {
 	wb.mu.RLock()
 	defer wb.mu.RUnlock()
 
@@ -50,12 +50,12 @@ func (wb *WatchBuffer) GetEventsSince(resourceVersion string) ([]storage.WatchEv
 		return nil, fmt.Errorf("invalid resourceVersion: %v", err)
 	}
 
-	var result []storage.WatchEvent
+	var result []storage.ResourceEvent
 	wb.events.Do(func(v interface{}) {
 		if v == nil {
 			return
 		}
-		event := v.(storage.WatchEvent)
+		event := v.(storage.ResourceEvent)
 		eventRV, err := strconv.ParseInt(event.ResourceVersion, 10, 64)
 		if err != nil {
 			return
@@ -70,11 +70,11 @@ func (wb *WatchBuffer) GetEventsSince(resourceVersion string) ([]storage.WatchEv
 }
 
 // getAllEvents returns all non-nil events in the buffer.
-func (wb *WatchBuffer) getAllEvents() []storage.WatchEvent {
-	var result []storage.WatchEvent
+func (wb *WatchBuffer) getAllEvents() []storage.ResourceEvent {
+	var result []storage.ResourceEvent
 	wb.events.Do(func(v interface{}) {
 		if v != nil {
-			result = append(result, v.(storage.WatchEvent))
+			result = append(result, v.(storage.ResourceEvent))
 		}
 	})
 	return result
@@ -85,7 +85,7 @@ func (wb *WatchBuffer) getAllEvents() []storage.WatchEvent {
 type Watcher struct {
 	mu          sync.RWMutex
 	buffer      *WatchBuffer
-	subscribers map[int]chan storage.WatchEvent
+	subscribers map[int]chan storage.ResourceEvent
 	nextID      int
 	closed      bool
 }
@@ -95,7 +95,7 @@ type Watcher struct {
 func NewWatcher(bufferSize int) *Watcher {
 	return &Watcher{
 		buffer:      NewWatchBuffer(bufferSize),
-		subscribers: make(map[int]chan storage.WatchEvent),
+		subscribers: make(map[int]chan storage.ResourceEvent),
 	}
 }
 
@@ -103,7 +103,7 @@ func NewWatcher(bufferSize int) *Watcher {
 var _ storage.EventBroadcaster = (*Watcher)(nil)
 
 // Broadcast sends an event to all subscribers and adds it to the buffer.
-func (w *Watcher) Broadcast(event storage.WatchEvent) {
+func (w *Watcher) Broadcast(event storage.ResourceEvent) {
 	// Add to buffer first
 	w.buffer.Add(event)
 
@@ -122,7 +122,7 @@ func (w *Watcher) Broadcast(event storage.WatchEvent) {
 
 // Subscribe creates a new watch channel and optionally sends historical events.
 // Implements EventBroadcaster interface.
-func (w *Watcher) Subscribe(sinceResourceVersion string) (<-chan storage.WatchEvent, func(), error) {
+func (w *Watcher) Subscribe(sinceResourceVersion string) (<-chan storage.ResourceEvent, func(), error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -134,7 +134,7 @@ func (w *Watcher) Subscribe(sinceResourceVersion string) (<-chan storage.WatchEv
 	w.nextID++
 
 	// Buffered channel to avoid blocking broadcaster
-	ch := make(chan storage.WatchEvent, 100)
+	ch := make(chan storage.ResourceEvent, 100)
 	w.subscribers[id] = ch
 
 	// Send historical events if requested
@@ -170,7 +170,7 @@ func (w *Watcher) Subscribe(sinceResourceVersion string) (<-chan storage.WatchEv
 // SubscribeWithID creates a new watch channel and returns the subscription ID.
 // Deprecated: Use Subscribe() which returns a stop function instead.
 // This method is kept for backward compatibility with existing code.
-func (w *Watcher) SubscribeWithID(sinceResourceVersion string) (<-chan storage.WatchEvent, int, error) {
+func (w *Watcher) SubscribeWithID(sinceResourceVersion string) (<-chan storage.ResourceEvent, int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -182,7 +182,7 @@ func (w *Watcher) SubscribeWithID(sinceResourceVersion string) (<-chan storage.W
 	w.nextID++
 
 	// Buffered channel to avoid blocking broadcaster
-	ch := make(chan storage.WatchEvent, 100)
+	ch := make(chan storage.ResourceEvent, 100)
 	w.subscribers[id] = ch
 
 	// Send historical events if requested

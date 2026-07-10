@@ -55,5 +55,5 @@ type ResourceStore interface {
 	// - Namespace (if specified in opts)
 	// - Label selector (if specified in opts)
 	// - Shard (if ShardSelector provided in opts)
-	Watch(opts ListOptions, resourceVersion string) (<-chan WatchEvent, func(), error)
+	Watch(opts ListOptions, resourceVersion string) (<-chan ResourceEvent, func(), error)
 }

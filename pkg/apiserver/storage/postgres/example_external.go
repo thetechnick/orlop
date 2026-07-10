@@ -16,7 +16,7 @@ import (
 // event sources. Real implementations would connect to actual databases.
 type ExternalDBBroadcaster struct {
 	mu          sync.RWMutex
-	subscribers map[int]chan storage.WatchEvent
+	subscribers map[int]chan storage.ResourceEvent
 	nextID      int
 	closed      bool
 	ctx         context.Context
@@ -37,7 +37,7 @@ func NewExternalDBBroadcaster(dbConnection interface{}) *ExternalDBBroadcaster {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	b := &ExternalDBBroadcaster{
-		subscribers:  make(map[int]chan storage.WatchEvent),
+		subscribers:  make(map[int]chan storage.ResourceEvent),
 		ctx:          ctx,
 		cancel:       cancel,
 		dbConnection: dbConnection,
@@ -59,7 +59,7 @@ func (b *ExternalDBBroadcaster) listenToDatabase() {
 	//   for changeStream.Next(ctx) {
 	//       var event bson.M
 	//       changeStream.Decode(&event)
-	//       b.Broadcast(convertToWatchEvent(event))
+	//       b.Broadcast(convertToResourceEvent(event))
 	//   }
 	//
 	// PostgreSQL:
@@ -80,7 +80,7 @@ func (b *ExternalDBBroadcaster) listenToDatabase() {
 
 // Broadcast sends an event to all active subscribers.
 // This method is typically called by the database listener goroutine.
-func (b *ExternalDBBroadcaster) Broadcast(event storage.WatchEvent) {
+func (b *ExternalDBBroadcaster) Broadcast(event storage.ResourceEvent) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -101,7 +101,7 @@ func (b *ExternalDBBroadcaster) Broadcast(event storage.WatchEvent) {
 
 // Subscribe creates a new watch starting from the given resource version.
 // For external databases, this might query historical events first.
-func (b *ExternalDBBroadcaster) Subscribe(sinceResourceVersion string) (<-chan storage.WatchEvent, func(), error) {
+func (b *ExternalDBBroadcaster) Subscribe(sinceResourceVersion string) (<-chan storage.ResourceEvent, func(), error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -112,7 +112,7 @@ func (b *ExternalDBBroadcaster) Subscribe(sinceResourceVersion string) (<-chan s
 	id := b.nextID
 	b.nextID++
 
-	ch := make(chan storage.WatchEvent, 100)
+	ch := make(chan storage.ResourceEvent, 100)
 	b.subscribers[id] = ch
 
 	// In a real implementation, query database for historical events

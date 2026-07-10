@@ -63,7 +63,7 @@ func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, op
 
 	// Send initial events if requested
 	if params.sendInitialEvents {
-		h.sendInitialWatchEvents(wctx, opts, params.allowWatchBookmarks)
+		h.sendInitialResourceEvents(wctx, opts, params.allowWatchBookmarks)
 	}
 
 	// Send initial bookmark if appropriate
@@ -78,7 +78,7 @@ func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, op
 	}
 
 	// Stream watch events
-	h.streamWatchEvents(ctx, wctx, eventCh, bookmarkCh, params.allowWatchBookmarks)
+	h.streamResourceEvents(ctx, wctx, eventCh, bookmarkCh, params.allowWatchBookmarks)
 }
 
 // parseWatchParams extracts and parses watch parameters from the request
@@ -160,8 +160,8 @@ func (h *ResourceHandler) getCurrentResourceVersion(opts storage.ListOptions) (s
 	return list.GetResourceVersion(), len(items) == 0
 }
 
-// sendInitialWatchEvents sends existing objects as ADDED events when sendInitialEvents=true
-func (h *ResourceHandler) sendInitialWatchEvents(wctx *watchContext, opts storage.ListOptions, allowBookmarks bool) {
+// sendInitialResourceEvents sends existing objects as ADDED events when sendInitialEvents=true
+func (h *ResourceHandler) sendInitialResourceEvents(wctx *watchContext, opts storage.ListOptions, allowBookmarks bool) {
 	list, err := wctx.handler.store.List(opts)
 	if err != nil {
 		return
@@ -219,8 +219,8 @@ func (h *ResourceHandler) setupPeriodicBookmarks() <-chan time.Time {
 	return ticker.C
 }
 
-// streamWatchEvents handles the main event streaming loop
-func (h *ResourceHandler) streamWatchEvents(ctx context.Context, wctx *watchContext, eventCh <-chan storage.WatchEvent, bookmarkCh <-chan time.Time, allowBookmarks bool) {
+// streamResourceEvents handles the main event streaming loop
+func (h *ResourceHandler) streamResourceEvents(ctx context.Context, wctx *watchContext, eventCh <-chan storage.ResourceEvent, bookmarkCh <-chan time.Time, allowBookmarks bool) {
 	currentRVInt, _ := strconv.ParseInt(wctx.currentResourceVersion, 10, 64)
 
 	for {

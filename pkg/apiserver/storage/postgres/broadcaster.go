@@ -30,7 +30,7 @@ type PostgresBroadcaster struct {
 	gvk         schema.GroupVersionKind
 
 	mu          sync.RWMutex
-	subscribers map[int]chan storage.WatchEvent
+	subscribers map[int]chan storage.ResourceEvent
 	nextID      int
 	closed      bool
 }
@@ -75,7 +75,7 @@ func NewPostgresBroadcaster(ctx context.Context, config PostgresBroadcasterConfi
 		tableName:   tableName,
 		scheme:      config.Scheme,
 		gvk:         config.GVK,
-		subscribers: make(map[int]chan storage.WatchEvent),
+		subscribers: make(map[int]chan storage.ResourceEvent),
 	}
 
 	// Create event log table
@@ -158,8 +158,8 @@ func (b *PostgresBroadcaster) listenForNotifications() {
 	}
 }
 
-// parseNotification parses a NOTIFY payload into a storage.WatchEvent.
-func (b *PostgresBroadcaster) parseNotification(payload string) (storage.WatchEvent, error) {
+// parseNotification parses a NOTIFY payload into a storage.ResourceEvent.
+func (b *PostgresBroadcaster) parseNotification(payload string) (storage.ResourceEvent, error) {
 	var event struct {
 		Type            string          `json:"type"`
 		ResourceVersion string          `json:"resourceVersion"`
@@ -167,16 +167,16 @@ func (b *PostgresBroadcaster) parseNotification(payload string) (storage.WatchEv
 	}
 
 	if err := json.Unmarshal([]byte(payload), &event); err != nil {
-		return storage.WatchEvent{}, err
+		return storage.ResourceEvent{}, err
 	}
 
 	// Reconstruct the typed object using the scheme
 	obj, err := b.reconstructObject(event.Object)
 	if err != nil {
-		return storage.WatchEvent{}, fmt.Errorf("failed to reconstruct object: %w", err)
+		return storage.ResourceEvent{}, fmt.Errorf("failed to reconstruct object: %w", err)
 	}
 
-	return storage.WatchEvent{
+	return storage.ResourceEvent{
 		Type:            event.Type,
 		ResourceVersion: event.ResourceVersion,
 		Object:          obj,
@@ -224,7 +224,7 @@ func (b *PostgresBroadcaster) reconstructObject(data []byte) (client.Object, err
 }
 
 // broadcastToSubscribers sends an event to all active subscribers.
-func (b *PostgresBroadcaster) broadcastToSubscribers(event storage.WatchEvent) {
+func (b *PostgresBroadcaster) broadcastToSubscribers(event storage.ResourceEvent) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -239,7 +239,7 @@ func (b *PostgresBroadcaster) broadcastToSubscribers(event storage.WatchEvent) {
 
 // Broadcast implements storage.EventBroadcaster.
 // Stores the event in the database and notifies all listeners via NOTIFY.
-func (b *PostgresBroadcaster) Broadcast(event storage.WatchEvent) {
+func (b *PostgresBroadcaster) Broadcast(event storage.ResourceEvent) {
 	b.mu.RLock()
 	if b.closed {
 		b.mu.RUnlock()
@@ -288,7 +288,7 @@ func (b *PostgresBroadcaster) Broadcast(event storage.WatchEvent) {
 
 // Subscribe implements storage.EventBroadcaster.
 // Returns historical events since the requested resource version, then live events.
-func (b *PostgresBroadcaster) Subscribe(sinceResourceVersion string) (<-chan storage.WatchEvent, func(), error) {
+func (b *PostgresBroadcaster) Subscribe(sinceResourceVersion string) (<-chan storage.ResourceEvent, func(), error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -299,7 +299,7 @@ func (b *PostgresBroadcaster) Subscribe(sinceResourceVersion string) (<-chan sto
 	id := b.nextID
 	b.nextID++
 
-	ch := make(chan storage.WatchEvent, 100)
+	ch := make(chan storage.ResourceEvent, 100)
 	b.subscribers[id] = ch
 
 	// Send historical events if requested (including from "0")
@@ -316,7 +316,7 @@ func (b *PostgresBroadcaster) Subscribe(sinceResourceVersion string) (<-chan sto
 }
 
 // sendHistoricalEvents queries the event log for historical events.
-func (b *PostgresBroadcaster) sendHistoricalEvents(ch chan storage.WatchEvent, sinceResourceVersion string) {
+func (b *PostgresBroadcaster) sendHistoricalEvents(ch chan storage.ResourceEvent, sinceResourceVersion string) {
 	rv, err := strconv.ParseInt(sinceResourceVersion, 10, 64)
 	if err != nil {
 		return
@@ -354,7 +354,7 @@ func (b *PostgresBroadcaster) sendHistoricalEvents(ch chan storage.WatchEvent, s
 			continue
 		}
 
-		event := storage.WatchEvent{
+		event := storage.ResourceEvent{
 			Type:            eventType,
 			ResourceVersion: strconv.FormatInt(resourceVersion, 10),
 			Object:          obj,

@@ -184,7 +184,7 @@ func (s *PostgresStore) Create(obj client.Object) error {
 
 	// Broadcast event
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(storage.WatchEvent{
+		s.broadcaster.Broadcast(storage.ResourceEvent{
 			Type:            "ADDED",
 			Object:          obj.DeepCopyObject().(client.Object),
 			ResourceVersion: strconv.FormatInt(rv, 10),
@@ -486,7 +486,7 @@ func (s *PostgresStore) Update(obj client.Object) error {
 
 	// Broadcast event
 	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(storage.WatchEvent{
+		s.broadcaster.Broadcast(storage.ResourceEvent{
 			Type:            "MODIFIED",
 			Object:          obj.DeepCopyObject().(client.Object),
 			ResourceVersion: strconv.FormatInt(rv, 10),
@@ -528,7 +528,7 @@ func (s *PostgresStore) Delete(namespace, name string) error {
 	// Broadcast event
 	if s.broadcaster != nil {
 		rv := s.nextResourceVersion()
-		s.broadcaster.Broadcast(storage.WatchEvent{
+		s.broadcaster.Broadcast(storage.ResourceEvent{
 			Type:            "DELETED",
 			Object:          obj,
 			ResourceVersion: strconv.FormatInt(rv, 10),
@@ -539,7 +539,7 @@ func (s *PostgresStore) Delete(namespace, name string) error {
 }
 
 // Watch implements ResourceStore.
-func (s *PostgresStore) Watch(opts storage.ListOptions, resourceVersion string) (<-chan storage.WatchEvent, func(), error) {
+func (s *PostgresStore) Watch(opts storage.ListOptions, resourceVersion string) (<-chan storage.ResourceEvent, func(), error) {
 	if s.broadcaster == nil {
 		return nil, nil, fmt.Errorf("broadcaster not configured")
 	}
@@ -551,7 +551,7 @@ func (s *PostgresStore) Watch(opts storage.ListOptions, resourceVersion string) 
 	}
 
 	// Create filtered output channel
-	outCh := make(chan storage.WatchEvent, 100)
+	outCh := make(chan storage.ResourceEvent, 100)
 	stopCh := make(chan struct{})
 
 	// Start filtering goroutine

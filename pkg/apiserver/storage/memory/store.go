@@ -101,7 +101,7 @@ func (s *MemoryStore) Create(obj client.Object) error {
 
 	// Broadcast watch event
 	watcher := s.broadcaster
-	watcher.Broadcast(storage.WatchEvent{
+	watcher.Broadcast(storage.ResourceEvent{
 		Type:            "ADDED",
 		Object:          obj.DeepCopyObject().(client.Object),
 		ResourceVersion: fmt.Sprintf("%d", newVersion),
@@ -300,7 +300,7 @@ func (s *MemoryStore) Update(obj client.Object) error {
 
 	// Broadcast watch event
 	watcher := s.broadcaster
-	watcher.Broadcast(storage.WatchEvent{
+	watcher.Broadcast(storage.ResourceEvent{
 		Type:            "MODIFIED",
 		Object:          obj.DeepCopyObject().(client.Object),
 		ResourceVersion: fmt.Sprintf("%d", newVersion),
@@ -325,7 +325,7 @@ func (s *MemoryStore) Delete(namespace, name string) error {
 
 	// Broadcast watch event (use current RV since delete doesn't change it)
 	watcher := s.broadcaster
-	watcher.Broadcast(storage.WatchEvent{
+	watcher.Broadcast(storage.ResourceEvent{
 		Type:            "DELETED",
 		Object:          obj.DeepCopyObject().(client.Object),
 		ResourceVersion: s.currentResourceVersion(),
@@ -378,7 +378,7 @@ func (s *MemoryStore) setResourceVersion(obj runtime.Object, version int64) erro
 }
 
 // Watch starts watching for changes starting from the given resource version.
-func (s *MemoryStore) Watch(opts storage.ListOptions, resourceVersion string) (<-chan storage.WatchEvent, func(), error) {
+func (s *MemoryStore) Watch(opts storage.ListOptions, resourceVersion string) (<-chan storage.ResourceEvent, func(), error) {
 	watcher := s.broadcaster
 
 	// Parse label selector if specified
@@ -398,7 +398,7 @@ func (s *MemoryStore) Watch(opts storage.ListOptions, resourceVersion string) (<
 	}
 
 	// Create filtered output channel
-	outCh := make(chan storage.WatchEvent, 100)
+	outCh := make(chan storage.ResourceEvent, 100)
 	stopCh := make(chan struct{})
 
 	// Start filtering goroutine
