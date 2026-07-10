@@ -8,6 +8,7 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/thetechnick/orlop/pkg/apiserver/storage"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -260,7 +261,7 @@ func TestPostgresStore_List(t *testing.T) {
 		store.Create(newTestObject(withName("obj2"), withNamespace("default")))
 		store.Create(newTestObject(withName("obj3"), withNamespace("kube-system")))
 
-		listObj, err := store.List(client.ListOptions{Namespace: "default"})
+		listObj, err := store.List(storage.ListOptions{Namespace: "default"})
 		if err != nil {
 			t.Fatalf("List() failed: %v", err)
 		}
@@ -279,7 +280,7 @@ func TestPostgresStore_List(t *testing.T) {
 		store.Create(newTestObject(withName("obj2"), withNamespace("kube-system")))
 		store.Create(newTestObject(withName("obj3"), withNamespace("kube-public")))
 
-		listObj, err := store.List(client.ListOptions{})
+		listObj, err := store.List(storage.ListOptions{})
 		if err != nil {
 			t.Fatalf("List() failed: %v", err)
 		}
@@ -294,7 +295,7 @@ func TestPostgresStore_List(t *testing.T) {
 		store, cleanup := setupTestStore(t)
 		defer cleanup()
 
-		listObj, err := store.List(client.ListOptions{Namespace: "default"})
+		listObj, err := store.List(storage.ListOptions{Namespace: "default"})
 		if err != nil {
 			t.Fatalf("List() failed: %v", err)
 		}
@@ -312,7 +313,7 @@ func TestPostgresStore_List(t *testing.T) {
 		store.Create(newTestObject(withName("obj1"), withNamespace("default")))
 		store.Create(newTestObject(withName("obj2"), withNamespace("default")))
 
-		listObj, _ := store.List(client.ListOptions{Namespace: "default"})
+		listObj, _ := store.List(storage.ListOptions{Namespace: "default"})
 		list := listObj.(*unstructured.UnstructuredList)
 
 		if list.GetResourceVersion() == "" {
@@ -513,7 +514,7 @@ func TestPostgresStore_Concurrency(t *testing.T) {
 		<-done
 
 		// Verify all objects were created
-		listObj, _ := store.List(client.ListOptions{})
+		listObj, _ := store.List(storage.ListOptions{})
 		list := listObj.(*unstructured.UnstructuredList)
 
 		if len(list.Items) != 3 {

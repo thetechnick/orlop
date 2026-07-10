@@ -13,10 +13,10 @@ import (
 	"github.com/thetechnick/orlop/pkg/apiserver/apply"
 	"github.com/thetechnick/orlop/pkg/apiserver/schema"
 	"github.com/thetechnick/orlop/pkg/apiserver/storage"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -174,27 +174,24 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build list options from query parameters
-	opts := client.ListOptions{
+	opts := storage.ListOptions{
 		Namespace: namespace,
 	}
 
 	// Parse label selector from query parameter
 	if labelSelectorStr := r.URL.Query().Get("labelSelector"); labelSelectorStr != "" {
-		selector, err := labels.Parse(labelSelectorStr)
+		// Validate label selector syntax before passing to storage
+		_, err := labels.Parse(labelSelectorStr)
 		if err != nil {
-			if namespace == "" {
-				h.logger.Info("Invalid label selector", "kind", h.gvk.Kind, "scope", "cluster")
-			} else {
-				h.logger.Info("Invalid label selector", "kind", h.gvk.Kind, "namespace", namespace)
-			}
+			h.logger.V(1).Info("Invalid label selector", "error", err)
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid label selector: %v", err))
 			return
 		}
-		opts.LabelSelector = selector
+		opts.LabelSelector = labelSelectorStr
 	}
 
 	// Parse shard selector from query parameters
-	shardSelector, err := ParseShardSelector(
+	shardSelector, err := storage.ParseShardSelector(
 		r.URL.Query().Get("shardIndex"),
 		r.URL.Query().Get("shardCount"),
 	)
@@ -203,6 +200,7 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid shard selector: %v", err))
 		return
 	}
+	opts.ShardSelector = shardSelector
 
 	// Check if this is a watch request
 	if r.URL.Query().Get("watch") == "true" {
@@ -229,51 +227,25 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 	// Set GVK on the list
 	list.GetObjectKind().SetGroupVersionKind(h.gvk.GroupVersion().WithKind(h.gvk.Kind + "List"))
 
+	// Log list operation
 	listMeta, _ := meta.ListAccessor(list)
-	totalCount := 0
+	count := 0
 	if listMeta != nil {
 		items, _ := meta.ExtractList(list)
-		totalCount = len(items)
+		count = len(items)
+	}
 
-		// Filter by shard if shard selector is specified
+	if namespace == "" {
 		if shardSelector != nil {
-			// Filter items - keep only objects matching this shard
-			filteredItems := []runtime.Object{}
-			for _, item := range items {
-				obj, ok := item.(client.Object)
-				if !ok {
-					continue
-				}
-
-				matches, err := shardSelector.MatchesObject(obj)
-				if err != nil {
-					h.logger.Error(err, "Shard matching failed", "kind", h.gvk.Kind)
-					continue
-				}
-
-				if matches {
-					filteredItems = append(filteredItems, item)
-				}
-			}
-
-			// Update the list with filtered items
-			if err := meta.SetList(list, filteredItems); err != nil {
-				h.logger.Error(err, "Failed to set filtered list", "kind", h.gvk.Kind)
-				writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to set filtered list: %v", err))
-				return
-			}
-
-			if namespace == "" {
-				h.logger.V(1).Info("Listed with shard filter", "kind", h.gvk.Kind, "scope", "cluster", "shard", shardSelector, "total", totalCount, "filtered", len(filteredItems))
-			} else {
-				h.logger.V(1).Info("Listed with shard filter", "kind", h.gvk.Kind, "namespace", namespace, "shard", shardSelector, "total", totalCount, "filtered", len(filteredItems))
-			}
+			h.logger.V(1).Info("Listed with shard filter", "kind", h.gvk.Kind, "scope", "cluster", "shard", shardSelector, "count", count)
 		} else {
-			if namespace == "" {
-				h.logger.V(1).Info("Listed", "kind", h.gvk.Kind, "scope", "cluster", "count", totalCount)
-			} else {
-				h.logger.V(1).Info("Listed", "kind", h.gvk.Kind, "namespace", namespace, "count", totalCount)
-			}
+			h.logger.V(1).Info("Listed", "kind", h.gvk.Kind, "scope", "cluster", "count", count)
+		}
+	} else {
+		if shardSelector != nil {
+			h.logger.V(1).Info("Listed with shard filter", "kind", h.gvk.Kind, "namespace", namespace, "shard", shardSelector, "count", count)
+		} else {
+			h.logger.V(1).Info("Listed", "kind", h.gvk.Kind, "namespace", namespace, "count", count)
 		}
 	}
 

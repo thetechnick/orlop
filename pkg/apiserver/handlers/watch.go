@@ -10,7 +10,6 @@ import (
 
 	"github.com/thetechnick/orlop/pkg/apiserver/storage"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // watchParams holds parsed watch request parameters
@@ -32,11 +31,11 @@ type watchContext struct {
 	currentResourceVersion string
 	initialBookmarkSent    bool
 	listIsEmpty            bool
-	shardSelector          *ShardSelector
+	shardSelector          *storage.ShardSelector
 }
 
 // handleWatch implements the Kubernetes watch protocol
-func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, opts client.ListOptions, shardSelector *ShardSelector) {
+func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, opts storage.ListOptions, shardSelector *storage.ShardSelector) {
 	params := h.parseWatchParams(r)
 	
 	h.logger.V(1).Info("Watch parameters",
@@ -128,7 +127,7 @@ func (h *ResourceHandler) setupWatchResponse(w http.ResponseWriter) http.Flusher
 }
 
 // initWatchContext initializes the watch context with current state
-func (h *ResourceHandler) initWatchContext(w http.ResponseWriter, flusher http.Flusher, opts client.ListOptions, resourceVersion string, shardSelector *ShardSelector) *watchContext {
+func (h *ResourceHandler) initWatchContext(w http.ResponseWriter, flusher http.Flusher, opts storage.ListOptions, resourceVersion string, shardSelector *storage.ShardSelector) *watchContext {
 	// Get current resource version and check if list is empty
 	currentRV, isEmpty := h.getCurrentResourceVersion(opts)
 
@@ -151,7 +150,7 @@ func (h *ResourceHandler) initWatchContext(w http.ResponseWriter, flusher http.F
 }
 
 // getCurrentResourceVersion retrieves the current resource version from the store
-func (h *ResourceHandler) getCurrentResourceVersion(opts client.ListOptions) (string, bool) {
+func (h *ResourceHandler) getCurrentResourceVersion(opts storage.ListOptions) (string, bool) {
 	list, err := h.store.List(opts)
 	if err != nil {
 		return "0", true
@@ -162,7 +161,7 @@ func (h *ResourceHandler) getCurrentResourceVersion(opts client.ListOptions) (st
 }
 
 // sendInitialWatchEvents sends existing objects as ADDED events when sendInitialEvents=true
-func (h *ResourceHandler) sendInitialWatchEvents(wctx *watchContext, opts client.ListOptions, allowBookmarks bool) {
+func (h *ResourceHandler) sendInitialWatchEvents(wctx *watchContext, opts storage.ListOptions, allowBookmarks bool) {
 	list, err := wctx.handler.store.List(opts)
 	if err != nil {
 		return
@@ -173,21 +172,8 @@ func (h *ResourceHandler) sendInitialWatchEvents(wctx *watchContext, opts client
 	// Count items and filter by shard
 	sentCount := 0
 	for _, item := range items {
-		// Filter by shard if shard selector is specified
-		if wctx.shardSelector != nil {
-			obj, ok := item.(client.Object)
-			if ok {
-				matches, matchErr := wctx.shardSelector.MatchesObject(obj)
-				if matchErr != nil {
-					wctx.handler.logger.Error(matchErr, "Shard matching failed in initial events")
-					continue
-				}
-				if !matches {
-					// Skip objects not in this shard
-					continue
-				}
-			}
-		}
+		// Note: Shard filtering is now handled by storage.List() via opts.ShardSelector
+		// No need to filter here
 
 		watchEvent := map[string]interface{}{
 			"type":   "ADDED",
@@ -254,22 +240,8 @@ func (h *ResourceHandler) streamWatchEvents(ctx context.Context, wctx *watchCont
 			// Update last resource version
 			wctx.lastResourceVersion = event.ResourceVersion
 
-			// Filter by shard if shard selector is specified
-			if wctx.shardSelector != nil {
-				obj, ok := event.Object.(client.Object)
-				if ok {
-					matches, err := wctx.shardSelector.MatchesObject(obj)
-					if err != nil {
-						// Log error but continue watching
-						wctx.handler.logger.Error(err, "Shard matching failed in watch")
-						continue
-					}
-					if !matches {
-						// Object doesn't belong to this shard, skip it
-						continue
-					}
-				}
-			}
+			// Note: Shard filtering is now handled by storage.Watch() via opts.ShardSelector
+			// No need to filter here
 
 			// Send watch event
 			watchEvent := map[string]interface{}{

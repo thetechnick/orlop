@@ -124,7 +124,7 @@ func (s *MemoryStore) Get(namespace, name string) (client.Object, error) {
 }
 
 // List lists all resources matching the given options and returns a properly typed list object.
-func (s *MemoryStore) List(opts client.ListOptions) (client.ObjectList, error) {
+func (s *MemoryStore) List(opts storage.ListOptions) (client.ObjectList, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -140,6 +140,15 @@ func (s *MemoryStore) List(opts client.ListOptions) (client.ObjectList, error) {
 		return nil, fmt.Errorf("created object is not a client.ObjectList")
 	}
 
+	// Parse label selector if specified
+	var labelSelector labels.Selector
+	if opts.LabelSelector != "" {
+		labelSelector, err = labels.Parse(opts.LabelSelector)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Collect matching items
 	var items []runtime.Object
 	for key, obj := range s.objects {
@@ -149,9 +158,19 @@ func (s *MemoryStore) List(opts client.ListOptions) (client.ObjectList, error) {
 		}
 
 		// Filter by label selector
-		// client.ListOptions uses LabelSelector which is a labels.Selector interface
-		if opts.LabelSelector != nil {
-			if !opts.LabelSelector.Matches(labels.Set(obj.GetLabels())) {
+		if labelSelector != nil {
+			if !labelSelector.Matches(labels.Set(obj.GetLabels())) {
+				continue
+			}
+		}
+
+		// Filter by shard if specified
+		if opts.ShardSelector != nil {
+			matches, err := storage.MatchesShard(obj, opts.ShardSelector)
+			if err != nil {
+				continue
+			}
+			if !matches {
 				continue
 			}
 		}
@@ -286,8 +305,18 @@ func (s *MemoryStore) setResourceVersion(obj runtime.Object, version int64) erro
 }
 
 // Watch starts watching for changes starting from the given resource version.
-func (s *MemoryStore) Watch(opts client.ListOptions, resourceVersion string) (<-chan storage.WatchEvent, func(), error) {
+func (s *MemoryStore) Watch(opts storage.ListOptions, resourceVersion string) (<-chan storage.WatchEvent, func(), error) {
 	watcher := s.broadcaster
+
+	// Parse label selector if specified
+	var labelSelector labels.Selector
+	if opts.LabelSelector != "" {
+		var err error
+		labelSelector, err = labels.Parse(opts.LabelSelector)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 
 	// Subscribe to watch events
 	eventCh, stopSubscription, err := watcher.Subscribe(resourceVersion)
@@ -325,13 +354,24 @@ func (s *MemoryStore) Watch(opts client.ListOptions, resourceVersion string) (<-
 				}
 
 				// Filter by label selector
-				if opts.LabelSelector != nil {
+				if labelSelector != nil {
 					accessor, err := meta.Accessor(event.Object)
 					if err != nil {
 						continue
 					}
-					if !opts.LabelSelector.Matches(labels.Set(accessor.GetLabels())) {
+					if !labelSelector.Matches(labels.Set(accessor.GetLabels())) {
 						continue
+					}
+				}
+
+				// Filter by shard
+				if opts.ShardSelector != nil {
+					clientObj, ok := event.Object.(client.Object)
+					if ok {
+						matches, err := storage.MatchesShard(clientObj, opts.ShardSelector)
+						if err != nil || !matches {
+							continue
+						}
 					}
 				}
 

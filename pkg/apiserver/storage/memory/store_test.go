@@ -7,6 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"github.com/thetechnick/orlop/pkg/apiserver/storage"
 )
 
 // Test helper factory using closures for flexibility
@@ -262,7 +263,7 @@ func TestMemoryStore_List(t *testing.T) {
 		store.Create(newTestObject(withName("obj2"), withNamespace("default")))
 		store.Create(newTestObject(withName("obj3"), withNamespace("kube-system")))
 
-		listObj, err := store.List(client.ListOptions{Namespace: "default"})
+		listObj, err := store.List(storage.ListOptions{Namespace: "default"})
 		if err != nil {
 			t.Fatalf("List() failed: %v", err)
 		}
@@ -279,7 +280,7 @@ func TestMemoryStore_List(t *testing.T) {
 		store.Create(newTestObject(withName("obj2"), withNamespace("kube-system")))
 		store.Create(newTestObject(withName("obj3"), withNamespace("kube-public")))
 
-		listObj, err := store.List(client.ListOptions{})
+		listObj, err := store.List(storage.ListOptions{})
 		if err != nil {
 			t.Fatalf("List() failed: %v", err)
 		}
@@ -293,7 +294,7 @@ func TestMemoryStore_List(t *testing.T) {
 	t.Run("returns empty list for empty store", func(t *testing.T) {
 		store := newTestStore()
 
-		listObj, err := store.List(client.ListOptions{Namespace: "default"})
+		listObj, err := store.List(storage.ListOptions{Namespace: "default"})
 		if err != nil {
 			t.Fatalf("List() failed: %v", err)
 		}
@@ -319,7 +320,7 @@ func TestMemoryStore_List(t *testing.T) {
 
 		// Note: Full label selector support requires setting up LabelSelector properly
 		// For now, we test that List accepts the option
-		listObj, err := store.List(client.ListOptions{
+		listObj, err := store.List(storage.ListOptions{
 			Namespace: "default",
 		})
 		if err != nil {
@@ -337,7 +338,7 @@ func TestMemoryStore_Watch(t *testing.T) {
 	t.Run("receives ADDED event on create", func(t *testing.T) {
 		store := newTestStore()
 
-		eventCh, stopFunc, err := store.Watch(client.ListOptions{Namespace: "default"}, "0")
+		eventCh, stopFunc, err := store.Watch(storage.ListOptions{Namespace: "default"}, "0")
 		if err != nil {
 			t.Fatalf("Watch() failed: %v", err)
 		}
@@ -360,7 +361,7 @@ func TestMemoryStore_Watch(t *testing.T) {
 		obj := newTestObject(withName("test"), withNamespace("default"))
 		store.Create(obj)
 
-		eventCh, stopFunc, err := store.Watch(client.ListOptions{Namespace: "default"}, "1")
+		eventCh, stopFunc, err := store.Watch(storage.ListOptions{Namespace: "default"}, "1")
 		if err != nil {
 			t.Fatalf("Watch() failed: %v", err)
 		}
@@ -380,7 +381,7 @@ func TestMemoryStore_Watch(t *testing.T) {
 		obj := newTestObject(withName("test"), withNamespace("default"))
 		store.Create(obj)
 
-		eventCh, stopFunc, err := store.Watch(client.ListOptions{Namespace: "default"}, "1")
+		eventCh, stopFunc, err := store.Watch(storage.ListOptions{Namespace: "default"}, "1")
 		if err != nil {
 			t.Fatalf("Watch() failed: %v", err)
 		}
@@ -397,7 +398,7 @@ func TestMemoryStore_Watch(t *testing.T) {
 	t.Run("stop function closes channel", func(t *testing.T) {
 		store := newTestStore()
 
-		eventCh, stopFunc, err := store.Watch(client.ListOptions{Namespace: "default"}, "0")
+		eventCh, stopFunc, err := store.Watch(storage.ListOptions{Namespace: "default"}, "0")
 		if err != nil {
 			t.Fatalf("Watch() failed: %v", err)
 		}
@@ -467,7 +468,7 @@ func TestMemoryStore_Concurrency(t *testing.T) {
 		<-done
 
 		// Verify all objects were created
-		listObj, _ := store.List(client.ListOptions{})
+		listObj, _ := store.List(storage.ListOptions{})
 		list := listObj.(*unstructured.UnstructuredList)
 
 		if len(list.Items) != 3 {

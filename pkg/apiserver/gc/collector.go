@@ -77,7 +77,7 @@ func (c *Collector) collectGarbage() {
 
 	for resourceType, store := range c.stores {
 		// List all objects in this store
-		list, err := store.List(client.ListOptions{})
+		list, err := store.List(storage.ListOptions{})
 		if err != nil {
 			c.logger.Error(err, "Failed to list objects for GC", "resourceType", resourceType)
 			continue

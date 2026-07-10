@@ -18,7 +18,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -198,18 +197,13 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Build list options from query parameters
-	opts := client.ListOptions{
+	opts := storage.ListOptions{
 		Namespace: namespace,
 	}
 
 	// Parse label selector from query parameter
 	if labelSelectorStr := r.URL.Query().Get("labelSelector"); labelSelectorStr != "" {
-		selector, err := labels.Parse(labelSelectorStr)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid label selector: %v", err))
-			return
-		}
-		opts.LabelSelector = selector
+		opts.LabelSelector = labelSelectorStr
 	}
 
 	// Check if this is a watch request
@@ -275,7 +269,7 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 }
 
 // handleWatch handles watch requests using streaming JSON.
-func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, opts client.ListOptions) {
+func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, opts storage.ListOptions) {
 	// Get resourceVersion to start from
 	resourceVersion := r.URL.Query().Get("resourceVersion")
 

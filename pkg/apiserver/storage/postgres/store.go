@@ -222,7 +222,7 @@ func (s *PostgresStore) Get(namespace, name string) (client.Object, error) {
 }
 
 // List implements ResourceStore.
-func (s *PostgresStore) List(opts client.ListOptions) (client.ObjectList, error) {
+func (s *PostgresStore) List(opts storage.ListOptions) (client.ObjectList, error) {
 	ctx := context.Background()
 
 	// Build query
@@ -237,8 +237,18 @@ func (s *PostgresStore) List(opts client.ListOptions) (client.ObjectList, error)
 		argNum++
 	}
 
+	// Parse label selector if specified
+	var labelSelector labels.Selector
+	if opts.LabelSelector != "" {
+		var err error
+		labelSelector, err = labels.Parse(opts.LabelSelector)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Filter by label selector
-	if opts.LabelSelector != nil {
+	if opts.LabelSelector != "" {
 		// Build JSONB query for labels
 		// For simplicity, we'll fetch all and filter in memory
 		// Production implementation should use proper JSONB operators
@@ -269,8 +279,16 @@ func (s *PostgresStore) List(opts client.ListOptions) (client.ObjectList, error)
 		}
 
 		// Apply label selector filter
-		if opts.LabelSelector != nil {
-			if !opts.LabelSelector.Matches(labels.Set(obj.GetLabels())) {
+		if labelSelector != nil {
+			if !labelSelector.Matches(labels.Set(obj.GetLabels())) {
+				continue
+			}
+		}
+
+		// Apply shard filter
+		if opts.ShardSelector != nil {
+			matches, err := storage.MatchesShard(obj, opts.ShardSelector)
+			if err != nil || !matches {
 				continue
 			}
 		}
@@ -405,7 +423,7 @@ func (s *PostgresStore) Delete(namespace, name string) error {
 }
 
 // Watch implements ResourceStore.
-func (s *PostgresStore) Watch(opts client.ListOptions, resourceVersion string) (<-chan storage.WatchEvent, func(), error) {
+func (s *PostgresStore) Watch(opts storage.ListOptions, resourceVersion string) (<-chan storage.WatchEvent, func(), error) {
 	if s.broadcaster == nil {
 		return nil, nil, fmt.Errorf("broadcaster not configured")
 	}
@@ -425,7 +443,16 @@ func (s *PostgresStore) Watch(opts client.ListOptions, resourceVersion string) (
 		defer close(outCh)
 		defer stopSubscription()
 
-		filter := &storage.DefaultWatchFilter{}
+		// Parse label selector
+		var labelSelector labels.Selector
+		if opts.LabelSelector != "" {
+			var err error
+			labelSelector, err = labels.Parse(opts.LabelSelector)
+			if err != nil {
+				// Log error but continue watching
+				labelSelector = nil
+			}
+		}
 
 		for {
 			select {
@@ -436,13 +463,34 @@ func (s *PostgresStore) Watch(opts client.ListOptions, resourceVersion string) (
 					return
 				}
 
-				// Filter event
-				if filter.Matches(event, opts) {
-					select {
-					case outCh <- event:
-					case <-stopCh:
-						return
+				// Apply filters
+				clientObj, ok := event.Object.(client.Object)
+				if !ok {
+					continue
+				}
+
+				// Filter by namespace
+				if opts.Namespace != "" && clientObj.GetNamespace() != opts.Namespace {
+					continue
+				}
+
+				// Filter by label selector
+				if labelSelector != nil && !labelSelector.Matches(labels.Set(clientObj.GetLabels())) {
+					continue
+				}
+
+				// Filter by shard
+				if opts.ShardSelector != nil {
+					matches, err := storage.MatchesShard(clientObj, opts.ShardSelector)
+					if err != nil || !matches {
+						continue
 					}
+				}
+
+				select {
+				case outCh <- event:
+				case <-stopCh:
+					return
 				}
 			}
 		}

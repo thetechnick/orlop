@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	"github.com/thetechnick/orlop/pkg/apiserver/storage"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -45,7 +46,7 @@ func (h *ResourceHandler) validateOwnerReferences(obj client.Object) error {
 // This is used for orphan deletion where dependents should survive owner deletion.
 func (h *ResourceHandler) removeOwnerReferencesFromDependents(namespace, name string, ownerUID string) error {
 	// List all objects
-	list, err := h.store.List(client.ListOptions{Namespace: namespace})
+	list, err := h.store.List(storage.ListOptions{Namespace: namespace})
 	if err != nil {
 		return fmt.Errorf("failed to list objects: %w", err)
 	}
@@ -105,7 +106,7 @@ func (h *ResourceHandler) removeOwnerReferencesFromDependents(namespace, name st
 // This is used for foreground and background cascade deletion.
 func (h *ResourceHandler) deleteDependents(namespace, name string, ownerUID string) error {
 	// List all objects
-	list, err := h.store.List(client.ListOptions{Namespace: namespace})
+	list, err := h.store.List(storage.ListOptions{Namespace: namespace})
 	if err != nil {
 		return fmt.Errorf("failed to list objects: %w", err)
 	}
