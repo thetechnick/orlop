@@ -12,13 +12,18 @@ import (
 )
 
 // setupRouter configures the HTTP router with all endpoints.
-func setupRouter(registry *ResourceRegistry, corsOrigins []string) (chi.Router, error) {
+func setupRouter(registry *ResourceRegistry, corsOrigins []string, rbacMiddleware func(http.Handler) http.Handler) (chi.Router, error) {
 	r := chi.NewRouter()
 
 	// Add CORS middleware
 	r.Use(middleware.CORS(middleware.CORSOptions{
 		AllowedOrigins: corsOrigins,
 	}))
+
+	// Add RBAC middleware if provided
+	if rbacMiddleware != nil {
+		r.Use(rbacMiddleware)
+	}
 
 	// Create discovery handler
 	discoveryHandler := handlers.NewDiscoveryHandler(registry)
@@ -103,13 +108,18 @@ func setupRouter(registry *ResourceRegistry, corsOrigins []string) (chi.Router, 
 // setupConvertingRouter configures the HTTP router with converting handlers for public API.
 // publicRegistry defines the public API types and schemas.
 // privateRegistry provides the shared storage backend.
-func setupConvertingRouter(publicRegistry *ResourceRegistry, privateRegistry *ResourceRegistry, converter *conversion.Converter, privateScheme *runtime.Scheme, corsOrigins []string) (chi.Router, error) {
+func setupConvertingRouter(publicRegistry *ResourceRegistry, privateRegistry *ResourceRegistry, converter *conversion.Converter, privateScheme *runtime.Scheme, corsOrigins []string, rbacMiddleware func(http.Handler) http.Handler) (chi.Router, error) {
 	r := chi.NewRouter()
 
 	// Add CORS middleware
 	r.Use(middleware.CORS(middleware.CORSOptions{
 		AllowedOrigins: corsOrigins,
 	}))
+
+	// Add RBAC middleware if provided
+	if rbacMiddleware != nil {
+		r.Use(rbacMiddleware)
+	}
 
 	// Create discovery handler using public registry (for public API types)
 	discoveryHandler := handlers.NewDiscoveryHandler(publicRegistry)

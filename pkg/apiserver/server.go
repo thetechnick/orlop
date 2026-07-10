@@ -7,8 +7,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-logr/logr"
+	rbacv1 "github.com/thetechnick/orlop/apis/private/rbac/v1"
 	"github.com/thetechnick/orlop/pkg/apiserver/conversion"
+	"github.com/thetechnick/orlop/pkg/apiserver/rbac"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // Server represents the API server with both private and public endpoints.
@@ -28,6 +31,7 @@ type Options struct {
 	PublicPort       int
 	CORSOrigins      []string
 	EnablePublicAPI  bool
+	EnableRBAC       bool           // Enable RBAC authorization middleware
 	PrivateResources []ResourceInfo
 	PublicResources  []ResourceInfo
 	PrivateScheme    *runtime.Scheme
@@ -67,7 +71,18 @@ func New(opts Options) (*Server, error) {
 		}
 	}
 
-	privateRouter, err := setupRouter(privateRegistry, opts.CORSOrigins)
+	// Setup RBAC if enabled
+	var rbacMiddleware func(http.Handler) http.Handler
+	if opts.EnableRBAC {
+		var err error
+		rbacMiddleware, err = setupRBAC(privateRegistry, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to setup RBAC: %w", err)
+		}
+		logger.Info("RBAC authorization enabled")
+	}
+
+	privateRouter, err := setupRouter(privateRegistry, opts.CORSOrigins, rbacMiddleware)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup private router: %w", err)
 	}
@@ -104,7 +119,7 @@ func New(opts Options) (*Server, error) {
 
 		converter := conversion.NewConverter(opts.PublicScheme, opts.PrivateScheme)
 		// Pass private registry so converting handlers can access the shared stores
-		publicRouter, err := setupConvertingRouter(publicRegistry, privateRegistry, converter, opts.PrivateScheme, opts.CORSOrigins)
+		publicRouter, err := setupConvertingRouter(publicRegistry, privateRegistry, converter, opts.PrivateScheme, opts.CORSOrigins, rbacMiddleware)
 		if err != nil {
 			return nil, fmt.Errorf("failed to setup public router: %w", err)
 		}
@@ -156,6 +171,60 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// setupRBAC creates and returns an RBAC middleware.
+// It registers RBAC resource types and creates an authorizer that uses them.
+func setupRBAC(registry *ResourceRegistry, logger logr.Logger) (func(http.Handler) http.Handler, error) {
+	// Register RBAC resource types
+	rbacResources := []ResourceInfo{
+		{
+			GVK:    schema.GroupVersionKind{Group: "rbac.orlop.thetechnick.ninja", Version: "v1", Kind: "Role"},
+			Plural: "roles",
+		},
+		{
+			GVK:    schema.GroupVersionKind{Group: "rbac.orlop.thetechnick.ninja", Version: "v1", Kind: "RoleBinding"},
+			Plural: "rolebindings",
+		},
+		{
+			GVK:    schema.GroupVersionKind{Group: "rbac.orlop.thetechnick.ninja", Version: "v1", Kind: "ClusterRole"},
+			Plural: "clusterroles",
+		},
+		{
+			GVK:    schema.GroupVersionKind{Group: "rbac.orlop.thetechnick.ninja", Version: "v1", Kind: "ClusterRoleBinding"},
+			Plural: "clusterrolebindings",
+		},
+	}
+
+	// Register RBAC resources with the registry
+	for _, res := range rbacResources {
+		if err := registry.Register(res); err != nil {
+			return nil, fmt.Errorf("failed to register RBAC resource %s: %w", res.Plural, err)
+		}
+	}
+
+	// Add RBAC types to scheme if not already present
+	if err := rbacv1.AddToScheme(registry.scheme); err != nil {
+		return nil, fmt.Errorf("failed to add RBAC types to scheme: %w", err)
+	}
+
+	// Get stores for RBAC resources
+	roleStore := registry.GetStore("roles")
+	roleBindingStore := registry.GetStore("rolebindings")
+	clusterRoleStore := registry.GetStore("clusterroles")
+	clusterRoleBindingStore := registry.GetStore("clusterrolebindings")
+
+	// Create authorizer
+	authorizer := rbac.NewAuthorizer(
+		roleStore,
+		roleBindingStore,
+		clusterRoleStore,
+		clusterRoleBindingStore,
+	)
+
+	// Create and return middleware
+	middleware := rbac.NewMiddleware(authorizer, logger)
+	return middleware.Handler(), nil
 }
 
 // PrivateAddress returns the private server's listen address.
