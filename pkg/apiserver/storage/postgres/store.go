@@ -9,13 +9,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lib/pq"
+	"github.com/thetechnick/orlop/pkg/apiserver/storage"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"github.com/thetechnick/orlop/pkg/apiserver/storage"
+	"k8s.io/apimachinery/pkg/selection"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -225,18 +228,6 @@ func (s *PostgresStore) Get(namespace, name string) (client.Object, error) {
 func (s *PostgresStore) List(opts storage.ListOptions) (client.ObjectList, error) {
 	ctx := context.Background()
 
-	// Build query
-	query := fmt.Sprintf("SELECT data FROM %s WHERE 1=1", s.tableName)
-	args := []interface{}{}
-	argNum := 1
-
-	// Filter by namespace
-	if opts.Namespace != "" {
-		query += fmt.Sprintf(" AND namespace = $%d", argNum)
-		args = append(args, opts.Namespace)
-		argNum++
-	}
-
 	// Parse label selector if specified
 	var labelSelector labels.Selector
 	if opts.LabelSelector != "" {
@@ -247,14 +238,97 @@ func (s *PostgresStore) List(opts storage.ListOptions) (client.ObjectList, error
 		}
 	}
 
-	// Filter by label selector
-	if opts.LabelSelector != "" {
-		// Build JSONB query for labels
-		// For simplicity, we'll fetch all and filter in memory
-		// Production implementation should use proper JSONB operators
+	// Build query with all filters at database level
+	query := fmt.Sprintf("SELECT namespace, name, data FROM %s WHERE 1=1", s.tableName)
+	args := []interface{}{}
+	argNum := 1
+
+	// Filter by namespace
+	if opts.Namespace != "" {
+		query += fmt.Sprintf(" AND namespace = $%d", argNum)
+		args = append(args, opts.Namespace)
+		argNum++
 	}
 
-	query += " ORDER BY resource_version ASC"
+	// Apply label selector using JSONB containment operator
+	if opts.LabelSelector != "" {
+		requirements, _ := labelSelector.Requirements()
+		for _, req := range requirements {
+			key := req.Key()
+			values := req.Values()
+
+			switch req.Operator() {
+			case selection.Exists:
+				// Label key must exist
+				query += fmt.Sprintf(" AND labels ? $%d", argNum)
+				args = append(args, key)
+				argNum++
+			case selection.DoesNotExist:
+				// Label key must not exist
+				query += fmt.Sprintf(" AND NOT (labels ? $%d)", argNum)
+				args = append(args, key)
+				argNum++
+			case selection.Equals, selection.DoubleEquals, selection.In:
+				// Label key must equal one of the values
+				if values.Len() == 1 {
+					// Single value: labels->>'key' = 'value'
+					query += fmt.Sprintf(" AND labels->>$%d = $%d", argNum, argNum+1)
+					args = append(args, key, values.List()[0])
+					argNum += 2
+				} else {
+					// Multiple values: labels->>'key' IN ('v1', 'v2', ...)
+					query += fmt.Sprintf(" AND labels->>$%d = ANY($%d)", argNum, argNum+1)
+					args = append(args, key, pq.Array(values.List()))
+					argNum += 2
+				}
+			case selection.NotEquals, selection.NotIn:
+				// Label key must not equal any of the values
+				if values.Len() == 1 {
+					query += fmt.Sprintf(" AND (NOT (labels ? $%d) OR labels->>$%d != $%d)", argNum, argNum, argNum+1)
+					args = append(args, key, values.List()[0])
+					argNum += 2
+				} else {
+					query += fmt.Sprintf(" AND (NOT (labels ? $%d) OR NOT (labels->>$%d = ANY($%d)))", argNum, argNum, argNum+1)
+					args = append(args, key, pq.Array(values.List()))
+					argNum += 2
+				}
+			}
+		}
+	}
+
+	// Apply continue token for pagination
+	if opts.Continue != "" {
+		continueToken, err := storage.DecodeContinueToken(opts.Continue)
+		if err != nil {
+			return nil, fmt.Errorf("invalid continue token: %w", err)
+		}
+
+		// Resume after the last returned object using lexicographic ordering
+		if continueToken.Namespace != "" {
+			// (namespace, name) > (continueToken.Namespace, continueToken.Name)
+			query += fmt.Sprintf(" AND (namespace, name) > ($%d, $%d)", argNum, argNum+1)
+			args = append(args, continueToken.Namespace, continueToken.Name)
+			argNum += 2
+		} else {
+			// Cluster-scoped resources: name > continueToken.Name
+			query += fmt.Sprintf(" AND name > $%d", argNum)
+			args = append(args, continueToken.Name)
+			argNum++
+		}
+	}
+
+	// Order by namespace and name for stable pagination
+	query += " ORDER BY namespace, name"
+
+	// Apply limit for pagination
+	var queryLimit int64
+	if opts.Limit > 0 {
+		// Fetch one extra to determine if there are more results
+		queryLimit = opts.Limit + 1
+		query += fmt.Sprintf(" LIMIT $%d", argNum)
+		args = append(args, queryLimit)
+		argNum++
+	}
 
 	// Execute query
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -266,11 +340,20 @@ func (s *PostgresStore) List(opts storage.ListOptions) (client.ObjectList, error
 	// Collect results
 	var items []unstructured.Unstructured
 	var maxRV int64
+	rowCount := int64(0)
 
 	for rows.Next() {
+		rowCount++
+
+		var namespace, name string
 		var data []byte
-		if err := rows.Scan(&data); err != nil {
+		if err := rows.Scan(&namespace, &name, &data); err != nil {
 			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		// Stop if we've reached the limit (the extra row is for hasMore detection)
+		if opts.Limit > 0 && rowCount > opts.Limit {
+			break
 		}
 
 		obj := &unstructured.Unstructured{}
@@ -278,14 +361,7 @@ func (s *PostgresStore) List(opts storage.ListOptions) (client.ObjectList, error
 			return nil, fmt.Errorf("failed to unmarshal object: %w", err)
 		}
 
-		// Apply label selector filter
-		if labelSelector != nil {
-			if !labelSelector.Matches(labels.Set(obj.GetLabels())) {
-				continue
-			}
-		}
-
-		// Apply shard filter
+		// Apply shard filter (this uses SHA-256 hash, can't be done efficiently in SQL)
 		if opts.ShardSelector != nil {
 			matches, err := storage.MatchesShard(obj, opts.ShardSelector)
 			if err != nil || !matches {
@@ -316,6 +392,25 @@ func (s *PostgresStore) List(opts storage.ListOptions) (client.ObjectList, error
 	list := listObj.(*unstructured.UnstructuredList)
 	list.SetResourceVersion(strconv.FormatInt(maxRV, 10))
 	list.Items = items
+
+	// Set continue token if there are more results
+	hasMore := opts.Limit > 0 && rowCount > opts.Limit
+	if hasMore && len(items) > 0 {
+		listMeta, err := meta.ListAccessor(list)
+		if err == nil {
+			lastItem := &items[len(items)-1]
+			token := &storage.ContinueToken{
+				Namespace:       lastItem.GetNamespace(),
+				Name:            lastItem.GetName(),
+				ResourceVersion: strconv.FormatInt(maxRV, 10),
+			}
+			continueStr, err := storage.EncodeContinueToken(token)
+			if err == nil {
+				listMeta.SetContinue(continueStr)
+				// Note: remainingItemCount is not easily calculable without a full count query
+			}
+		}
+	}
 
 	return list, nil
 }
