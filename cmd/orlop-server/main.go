@@ -16,12 +16,13 @@ import (
 
 func main() {
 	var (
-		address      string
-		privatePort  int
-		publicPort   int
-		corsOrigins  string
-		enablePublic bool
-		enableRBAC   bool
+		address        string
+		privatePort    int
+		publicPort     int
+		corsOrigins    string
+		enablePublic   bool
+		enableRBAC     bool
+		enableAuthn    bool
 	)
 
 	flag.StringVar(&address, "address", "0.0.0.0", "address to bind to")
@@ -29,6 +30,7 @@ func main() {
 	flag.IntVar(&publicPort, "public-port", 8081, "port for public API")
 	flag.BoolVar(&enablePublic, "enable-public-api", true, "enable public API server")
 	flag.BoolVar(&enableRBAC, "enable-rbac", false, "enable RBAC authorization middleware")
+	flag.BoolVar(&enableAuthn, "enable-authentication", false, "enable ServiceAccount authentication middleware")
 	flag.StringVar(&corsOrigins, "cors-origins", "*", "comma-separated list of allowed CORS origins")
 	flag.Parse()
 
@@ -46,17 +48,18 @@ func main() {
 
 	// Create server with resource configuration
 	opts := apiserver.Options{
-		Address:          address,
-		PrivatePort:      privatePort,
-		PublicPort:       publicPort,
-		CORSOrigins:      origins,
-		EnablePublicAPI:  enablePublic,
-		EnableRBAC:       enableRBAC,
-		PrivateResources: getPrivateResources(),
-		PublicResources:  getPublicResources(),
-		PrivateScheme:    getPrivateScheme(),
-		PublicScheme:     getPublicScheme(),
-		Logger:           logger,
+		Address:              address,
+		PrivatePort:          privatePort,
+		PublicPort:           publicPort,
+		CORSOrigins:          origins,
+		EnablePublicAPI:      enablePublic,
+		EnableRBAC:           enableRBAC,
+		EnableAuthentication: enableAuthn,
+		PrivateResources:     getPrivateResources(),
+		PublicResources:      getPublicResources(),
+		PrivateScheme:        getPrivateScheme(),
+		PublicScheme:         getPublicScheme(),
+		Logger:               logger,
 	}
 
 	server, err := apiserver.New(opts)

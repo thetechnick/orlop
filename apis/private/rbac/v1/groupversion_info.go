@@ -35,6 +35,10 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&RoleBindingList{},
 		&ClusterRoleBinding{},
 		&ClusterRoleBindingList{},
+		&ServiceAccount{},
+		&ServiceAccountList{},
+		&Secret{},
+		&SecretList{},
 	)
 	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-logr/logr"
 	rbacv1 "github.com/thetechnick/orlop/apis/private/rbac/v1"
+	"github.com/thetechnick/orlop/pkg/apiserver/authn"
 	"github.com/thetechnick/orlop/pkg/apiserver/conversion"
 	"github.com/thetechnick/orlop/pkg/apiserver/rbac"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -26,18 +27,19 @@ type Server struct {
 
 // Options holds server configuration.
 type Options struct {
-	Address          string
-	PrivatePort      int
-	PublicPort       int
-	CORSOrigins      []string
-	EnablePublicAPI  bool
-	EnableRBAC       bool           // Enable RBAC authorization middleware
-	PrivateResources []ResourceInfo
-	PublicResources  []ResourceInfo
-	PrivateScheme    *runtime.Scheme
-	PublicScheme     *runtime.Scheme
-	StorageFactory   StorageFactory // Optional: custom storage factory (defaults to in-memory)
-	Logger           logr.Logger    // Optional: logger for server operations (defaults to discard logger)
+	Address            string
+	PrivatePort        int
+	PublicPort         int
+	CORSOrigins        []string
+	EnablePublicAPI    bool
+	EnableRBAC         bool           // Enable RBAC authorization middleware
+	EnableAuthentication bool         // Enable ServiceAccount authentication middleware
+	PrivateResources   []ResourceInfo
+	PublicResources    []ResourceInfo
+	PrivateScheme      *runtime.Scheme
+	PublicScheme       *runtime.Scheme
+	StorageFactory     StorageFactory // Optional: custom storage factory (defaults to in-memory)
+	Logger             logr.Logger    // Optional: logger for server operations (defaults to discard logger)
 }
 
 // New creates a new API server with the given options.
@@ -71,6 +73,17 @@ func New(opts Options) (*Server, error) {
 		}
 	}
 
+	// Setup authentication if enabled
+	var authnMiddleware func(http.Handler) http.Handler
+	if opts.EnableAuthentication {
+		var err error
+		authnMiddleware, err = setupAuthentication(privateRegistry, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to setup authentication: %w", err)
+		}
+		logger.Info("ServiceAccount authentication enabled")
+	}
+
 	// Setup RBAC if enabled
 	var rbacMiddleware func(http.Handler) http.Handler
 	if opts.EnableRBAC {
@@ -82,7 +95,7 @@ func New(opts Options) (*Server, error) {
 		logger.Info("RBAC authorization enabled")
 	}
 
-	privateRouter, err := setupRouter(privateRegistry, opts.CORSOrigins, rbacMiddleware)
+	privateRouter, err := setupRouter(privateRegistry, opts.CORSOrigins, authnMiddleware, rbacMiddleware)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup private router: %w", err)
 	}
@@ -119,7 +132,7 @@ func New(opts Options) (*Server, error) {
 
 		converter := conversion.NewConverter(opts.PublicScheme, opts.PrivateScheme)
 		// Pass private registry so converting handlers can access the shared stores
-		publicRouter, err := setupConvertingRouter(publicRegistry, privateRegistry, converter, opts.PrivateScheme, opts.CORSOrigins, rbacMiddleware)
+		publicRouter, err := setupConvertingRouter(publicRegistry, privateRegistry, converter, opts.PrivateScheme, opts.CORSOrigins, authnMiddleware, rbacMiddleware)
 		if err != nil {
 			return nil, fmt.Errorf("failed to setup public router: %w", err)
 		}
@@ -171,6 +184,45 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// setupAuthentication creates and returns an authentication middleware.
+// It registers ServiceAccount and Secret resource types and creates an authenticator.
+func setupAuthentication(registry *ResourceRegistry, logger logr.Logger) (func(http.Handler) http.Handler, error) {
+	// Register ServiceAccount and Secret resource types
+	authResources := []ResourceInfo{
+		{
+			GVK:    schema.GroupVersionKind{Group: "rbac.orlop.thetechnick.ninja", Version: "v1", Kind: "ServiceAccount"},
+			Plural: "serviceaccounts",
+		},
+		{
+			GVK:    schema.GroupVersionKind{Group: "rbac.orlop.thetechnick.ninja", Version: "v1", Kind: "Secret"},
+			Plural: "secrets",
+		},
+	}
+
+	// Register authentication resources with the registry
+	for _, res := range authResources {
+		if err := registry.Register(res); err != nil {
+			return nil, fmt.Errorf("failed to register authentication resource %s: %w", res.Plural, err)
+		}
+	}
+
+	// Add authentication types to scheme if not already present
+	if err := rbacv1.AddToScheme(registry.scheme); err != nil {
+		return nil, fmt.Errorf("failed to add authentication types to scheme: %w", err)
+	}
+
+	// Get stores for authentication resources
+	serviceAccountStore := registry.GetStore("serviceaccounts")
+	secretStore := registry.GetStore("secrets")
+
+	// Create authenticator
+	authenticator := authn.NewAuthenticator(serviceAccountStore, secretStore)
+
+	// Create and return middleware
+	middleware := authn.NewMiddleware(authenticator, logger)
+	return middleware.Handler(), nil
 }
 
 // setupRBAC creates and returns an RBAC middleware.

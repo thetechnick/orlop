@@ -36,6 +36,18 @@ const RolePlural = "roles"
 // RoleSingular is the singular name for Role resources.
 const RoleSingular = "role"
 
+// SecretPlural is the plural name for Secret resources.
+const SecretPlural = "secrets"
+
+// SecretSingular is the singular name for Secret resources.
+const SecretSingular = "secret"
+
+// ServiceAccountPlural is the plural name for ServiceAccount resources.
+const ServiceAccountPlural = "serviceaccounts"
+
+// ServiceAccountSingular is the singular name for ServiceAccount resources.
+const ServiceAccountSingular = "serviceaccount"
+
 var (
 	// ClusterRoleBindingSchemaYAML contains the OpenAPI v3 schema for ClusterRoleBinding.
 	//go:embed .schemas/clusterrolebinding_schema.yaml
@@ -53,6 +65,14 @@ var (
 	//go:embed .schemas/role_schema.yaml
 	RoleSchemaYAML string
 
+	// SecretSchemaYAML contains the OpenAPI v3 schema for Secret.
+	//go:embed .schemas/secret_schema.yaml
+	SecretSchemaYAML string
+
+	// ServiceAccountSchemaYAML contains the OpenAPI v3 schema for ServiceAccount.
+	//go:embed .schemas/serviceaccount_schema.yaml
+	ServiceAccountSchemaYAML string
+
 )
 
 var (
@@ -67,6 +87,12 @@ var (
 
 	// RoleSchema is the parsed structural schema for Role.
 	RoleSchema *schema.Structural
+
+	// SecretSchema is the parsed structural schema for Secret.
+	SecretSchema *schema.Structural
+
+	// ServiceAccountSchema is the parsed structural schema for ServiceAccount.
+	ServiceAccountSchema *schema.Structural
 )
 
 func init() {
@@ -127,6 +153,34 @@ func init() {
 	if err != nil {
 		panic("failed to create structural schema for Role: " + err.Error())
 	}
+
+	// Parse Secret schema
+	var secretPropsV1 apiextv1.JSONSchemaProps
+	if err := yaml.Unmarshal([]byte(SecretSchemaYAML), &secretPropsV1); err != nil {
+		panic("failed to unmarshal Secret schema: " + err.Error())
+	}
+	var secretProps apiext.JSONSchemaProps
+	if err := apiextv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(&secretPropsV1, &secretProps, nil); err != nil {
+		panic("failed to convert Secret schema: " + err.Error())
+	}
+	SecretSchema, err = schema.NewStructural(&secretProps)
+	if err != nil {
+		panic("failed to create structural schema for Secret: " + err.Error())
+	}
+
+	// Parse ServiceAccount schema
+	var serviceaccountPropsV1 apiextv1.JSONSchemaProps
+	if err := yaml.Unmarshal([]byte(ServiceAccountSchemaYAML), &serviceaccountPropsV1); err != nil {
+		panic("failed to unmarshal ServiceAccount schema: " + err.Error())
+	}
+	var serviceaccountProps apiext.JSONSchemaProps
+	if err := apiextv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(&serviceaccountPropsV1, &serviceaccountProps, nil); err != nil {
+		panic("failed to convert ServiceAccount schema: " + err.Error())
+	}
+	ServiceAccountSchema, err = schema.NewStructural(&serviceaccountProps)
+	if err != nil {
+		panic("failed to create structural schema for ServiceAccount: " + err.Error())
+	}
 }
 
 // GetResourceInfos returns ResourceInfo definitions for all types in this package.
@@ -156,6 +210,18 @@ func GetResourceInfos() []types.ResourceInfo {
 			Plural:     RolePlural,
 			Singular:   RoleSingular,
 			SchemaYAML: RoleSchemaYAML,
+		},
+		{
+			GVK:        GroupVersion.WithKind("Secret"),
+			Plural:     SecretPlural,
+			Singular:   SecretSingular,
+			SchemaYAML: SecretSchemaYAML,
+		},
+		{
+			GVK:        GroupVersion.WithKind("ServiceAccount"),
+			Plural:     ServiceAccountPlural,
+			Singular:   ServiceAccountSingular,
+			SchemaYAML: ServiceAccountSchemaYAML,
 		},
 	}
 }

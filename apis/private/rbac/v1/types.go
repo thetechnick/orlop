@@ -101,6 +101,89 @@ type ClusterRoleBindingList struct {
 	Items           []ClusterRoleBinding `json:"items"`
 }
 
+// +kubebuilder:object:root=true
+// +kubebuilder:resource:scope=Namespaced
+
+// ServiceAccount represents an identity for processes that run in a Pod.
+// ServiceAccounts can be used for authentication via bearer tokens.
+type ServiceAccount struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	// Secrets is the list of secrets allowed to be used by pods running using this ServiceAccount.
+	// +optional
+	Secrets []ObjectReference `json:"secrets,omitempty"`
+
+	// AutomountServiceAccountToken indicates whether pods running as this service account should have an API token automatically mounted.
+	// +optional
+	AutomountServiceAccountToken *bool `json:"automountServiceAccountToken,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+
+// ServiceAccountList is a list of ServiceAccount objects.
+type ServiceAccountList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []ServiceAccount `json:"items"`
+}
+
+// ObjectReference contains enough information to let you inspect or modify the referred object.
+type ObjectReference struct {
+	// Kind of the referent.
+	// +optional
+	Kind string `json:"kind,omitempty"`
+	// Namespace of the referent.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+	// Name of the referent.
+	// +optional
+	Name string `json:"name,omitempty"`
+	// UID of the referent.
+	// +optional
+	UID string `json:"uid,omitempty"`
+	// API version of the referent.
+	// +optional
+	APIVersion string `json:"apiVersion,omitempty"`
+	// Specific resourceVersion to which this reference is made, if any.
+	// +optional
+	ResourceVersion string `json:"resourceVersion,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:resource:scope=Namespaced
+
+// Secret holds secret data of a certain type.
+// Used to store ServiceAccount tokens.
+type Secret struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+
+	// Type of secret. For ServiceAccount tokens, this should be "kubernetes.io/service-account-token".
+	// +optional
+	Type string `json:"type,omitempty"`
+
+	// Data contains the secret data. Each key must consist of alphanumeric characters, '-', '_' or '.'.
+	// The values are base64 encoded strings.
+	// +optional
+	Data map[string][]byte `json:"data,omitempty"`
+
+	// StringData allows specifying non-binary secret data in string form.
+	// It is provided as a write-only convenience method.
+	// All keys and values are merged into the data field on write, overwriting any existing values.
+	// +optional
+	StringData map[string]string `json:"stringData,omitempty"`
+}
+
+// +kubebuilder:object:root=true
+
+// SecretList is a list of Secret objects.
+type SecretList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []Secret `json:"items"`
+}
+
 // Subject contains a reference to the object or user identities a role binding applies to.
 type Subject struct {
 	// Kind of object being referenced. Values defined by this API group are "User", "Group", and "ServiceAccount".
