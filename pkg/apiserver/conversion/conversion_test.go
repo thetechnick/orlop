@@ -282,7 +282,7 @@ func TestConverter_PrivateToPublic(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			publicScheme, privateScheme := tt.setupScheme()
-			converter := NewConverter(publicScheme, privateScheme)
+			converter := NewConverter(publicScheme, privateScheme, "")
 
 			// Set GVK on private object
 			tt.privateObj.SetGroupVersionKind(schema.GroupVersionKind{
@@ -427,7 +427,7 @@ func TestConverter_PublicToPrivate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			publicScheme, privateScheme := tt.setupScheme()
-			converter := NewConverter(publicScheme, privateScheme)
+			converter := NewConverter(publicScheme, privateScheme, "")
 
 			// Set GVK
 			gvk := schema.GroupVersionKind{
@@ -457,7 +457,7 @@ func TestConverter_PublicToPrivate(t *testing.T) {
 func TestConverter_FilterPrivateMetadata(t *testing.T) {
 	publicScheme := makeTestScheme()
 	privateScheme := makeTestScheme()
-	converter := NewConverter(publicScheme, privateScheme)
+	converter := NewConverter(publicScheme, privateScheme, "")
 
 	tests := []struct {
 		name     string
@@ -547,7 +547,7 @@ func TestConverter_FilterPrivateMetadata(t *testing.T) {
 func TestConverter_FilterPrivateConditions(t *testing.T) {
 	publicScheme := makeTestScheme()
 	privateScheme := makeTestScheme()
-	converter := NewConverter(publicScheme, privateScheme)
+	converter := NewConverter(publicScheme, privateScheme, "")
 
 	tests := []struct {
 		name     string

@@ -38,6 +38,7 @@ type Options struct {
 	PublicResources    []ResourceInfo
 	PrivateScheme      *runtime.Scheme
 	PublicScheme       *runtime.Scheme
+	PrivatePrefix      string         // Optional: prefix for private labels/annotations/conditions filtered during conversion (defaults to conversion.DefaultPrivatePrefix)
 	StorageFactory     StorageFactory // Optional: custom storage factory (defaults to in-memory)
 	Logger             logr.Logger    // Optional: logger for server operations (defaults to discard logger)
 }
@@ -130,7 +131,7 @@ func New(opts Options) (*Server, error) {
 			}
 		}
 
-		converter := conversion.NewConverter(opts.PublicScheme, opts.PrivateScheme)
+		converter := conversion.NewConverter(opts.PublicScheme, opts.PrivateScheme, opts.PrivatePrefix)
 		// Pass private registry so converting handlers can access the shared stores
 		publicRouter, err := setupConvertingRouter(publicRegistry, privateRegistry, converter, opts.PrivateScheme, opts.CORSOrigins, authnMiddleware, rbacMiddleware)
 		if err != nil {

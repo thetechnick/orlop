@@ -9,17 +9,26 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
+const DefaultPrivatePrefix = "private.orlop.thetechnick.ninja/"
+
 // Converter handles conversion between private and public API types using scheme conversion.
 type Converter struct {
 	publicScheme  *runtime.Scheme
 	privateScheme *runtime.Scheme
+	privatePrefix string
 }
 
 // NewConverter creates a new converter.
-func NewConverter(publicScheme, privateScheme *runtime.Scheme) *Converter {
+// privatePrefix controls which labels, annotations, and condition types are
+// stripped during private-to-public conversion. Pass "" to use DefaultPrivatePrefix.
+func NewConverter(publicScheme, privateScheme *runtime.Scheme, privatePrefix string) *Converter {
+	if privatePrefix == "" {
+		privatePrefix = DefaultPrivatePrefix
+	}
 	return &Converter{
 		publicScheme:  publicScheme,
 		privateScheme: privateScheme,
+		privatePrefix: privatePrefix,
 	}
 }
 
@@ -59,10 +68,8 @@ func (c *Converter) PrivateToPublic(private runtime.Object) (runtime.Object, err
 	return public, nil
 }
 
-// filterPrivateMetadata removes labels and annotations prefixed with private.orlop.thetechnick.ninja/
+// filterPrivateMetadata removes labels and annotations with the configured private prefix.
 func (c *Converter) filterPrivateMetadata(obj runtime.Object) {
-	const privatePrefix = "private.orlop.thetechnick.ninja/"
-
 	accessor, err := meta.Accessor(obj)
 	if err != nil {
 		return
@@ -73,7 +80,7 @@ func (c *Converter) filterPrivateMetadata(obj runtime.Object) {
 	if labels != nil {
 		filtered := make(map[string]string)
 		for k, v := range labels {
-			if !strings.HasPrefix(k, privatePrefix) {
+			if !strings.HasPrefix(k, c.privatePrefix) {
 				filtered[k] = v
 			}
 		}
@@ -85,7 +92,7 @@ func (c *Converter) filterPrivateMetadata(obj runtime.Object) {
 	if annotations != nil {
 		filtered := make(map[string]string)
 		for k, v := range annotations {
-			if !strings.HasPrefix(k, privatePrefix) {
+			if !strings.HasPrefix(k, c.privatePrefix) {
 				filtered[k] = v
 			}
 		}
@@ -93,10 +100,8 @@ func (c *Converter) filterPrivateMetadata(obj runtime.Object) {
 	}
 }
 
-// filterPrivateConditions removes conditions with types prefixed with private.orlop.thetechnick.ninja/
+// filterPrivateConditions removes conditions with types matching the configured private prefix.
 func (c *Converter) filterPrivateConditions(obj runtime.Object) {
-	const privatePrefix = "private.orlop.thetechnick.ninja/"
-
 	// Convert to map to access status.conditions
 	jsonData, err := json.Marshal(obj)
 	if err != nil {
@@ -125,7 +130,7 @@ func (c *Converter) filterPrivateConditions(obj runtime.Object) {
 		// Try as string first (simple condition type)
 		if condStr, ok := cond.(string); ok {
 			// Only include conditions that don't have the private prefix
-			if !strings.HasPrefix(condStr, privatePrefix) {
+			if !strings.HasPrefix(condStr, c.privatePrefix) {
 				filtered = append(filtered, cond)
 			}
 			continue
@@ -141,7 +146,7 @@ func (c *Converter) filterPrivateConditions(obj runtime.Object) {
 			continue
 		}
 		// Only include conditions that don't have the private prefix
-		if !strings.HasPrefix(condType, privatePrefix) {
+		if !strings.HasPrefix(condType, c.privatePrefix) {
 			filtered = append(filtered, cond)
 		}
 	}
