@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 				Version: "v1",
 				Kind:    "Object",
 			},
-			Plural:     privatev1.ObjectPlural,
+			Plural:     privatev1.ObjectResourceInfo.Plural,
 			SchemaYAML: privatev1.ObjectSchemaYAML,
 		},
 		{
@@ -47,7 +47,7 @@ func TestMain(m *testing.M) {
 				Version: "v1",
 				Kind:    "Other",
 			},
-			Plural:     privatev1.OtherPlural,
+			Plural:     privatev1.OtherResourceInfo.Plural,
 			SchemaYAML: privatev1.OtherSchemaYAML,
 		},
 	}

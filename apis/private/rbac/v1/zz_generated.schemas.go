@@ -6,47 +6,7 @@ import (
 	_ "embed"
 
 	"github.com/thetechnick/orlop/pkg/apiserver/types"
-	apiext "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
-	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
-	"sigs.k8s.io/yaml"
 )
-
-// ClusterRoleBindingPlural is the plural name for ClusterRoleBinding resources.
-const ClusterRoleBindingPlural = "clusterrolebindings"
-
-// ClusterRoleBindingSingular is the singular name for ClusterRoleBinding resources.
-const ClusterRoleBindingSingular = "clusterrolebinding"
-
-// ClusterRolePlural is the plural name for ClusterRole resources.
-const ClusterRolePlural = "clusterroles"
-
-// ClusterRoleSingular is the singular name for ClusterRole resources.
-const ClusterRoleSingular = "clusterrole"
-
-// RoleBindingPlural is the plural name for RoleBinding resources.
-const RoleBindingPlural = "rolebindings"
-
-// RoleBindingSingular is the singular name for RoleBinding resources.
-const RoleBindingSingular = "rolebinding"
-
-// RolePlural is the plural name for Role resources.
-const RolePlural = "roles"
-
-// RoleSingular is the singular name for Role resources.
-const RoleSingular = "role"
-
-// SecretPlural is the plural name for Secret resources.
-const SecretPlural = "secrets"
-
-// SecretSingular is the singular name for Secret resources.
-const SecretSingular = "secret"
-
-// ServiceAccountPlural is the plural name for ServiceAccount resources.
-const ServiceAccountPlural = "serviceaccounts"
-
-// ServiceAccountSingular is the singular name for ServiceAccount resources.
-const ServiceAccountSingular = "serviceaccount"
 
 var (
 	// ClusterRoleBindingSchemaYAML contains the OpenAPI v3 schema for ClusterRoleBinding.
@@ -75,159 +35,69 @@ var (
 
 )
 
-var (
-	// ClusterRoleBindingSchema is the parsed structural schema for ClusterRoleBinding.
-	ClusterRoleBindingSchema *schema.Structural
+// ClusterRoleBindingResourceInfo describes the ClusterRoleBinding resource type.
+var ClusterRoleBindingResourceInfo = types.ResourceInfo{
+	GVK:        GroupVersion.WithKind("ClusterRoleBinding"),
+	Plural:     "clusterrolebindings",
+	Singular:   "clusterrolebinding",
+	Namespaced: false,
+	SchemaYAML: ClusterRoleBindingSchemaYAML,
+}
 
-	// ClusterRoleSchema is the parsed structural schema for ClusterRole.
-	ClusterRoleSchema *schema.Structural
+// ClusterRoleResourceInfo describes the ClusterRole resource type.
+var ClusterRoleResourceInfo = types.ResourceInfo{
+	GVK:        GroupVersion.WithKind("ClusterRole"),
+	Plural:     "clusterroles",
+	Singular:   "clusterrole",
+	Namespaced: false,
+	SchemaYAML: ClusterRoleSchemaYAML,
+}
 
-	// RoleBindingSchema is the parsed structural schema for RoleBinding.
-	RoleBindingSchema *schema.Structural
+// RoleBindingResourceInfo describes the RoleBinding resource type.
+var RoleBindingResourceInfo = types.ResourceInfo{
+	GVK:        GroupVersion.WithKind("RoleBinding"),
+	Plural:     "rolebindings",
+	Singular:   "rolebinding",
+	Namespaced: true,
+	SchemaYAML: RoleBindingSchemaYAML,
+}
 
-	// RoleSchema is the parsed structural schema for Role.
-	RoleSchema *schema.Structural
+// RoleResourceInfo describes the Role resource type.
+var RoleResourceInfo = types.ResourceInfo{
+	GVK:        GroupVersion.WithKind("Role"),
+	Plural:     "roles",
+	Singular:   "role",
+	Namespaced: true,
+	SchemaYAML: RoleSchemaYAML,
+}
 
-	// SecretSchema is the parsed structural schema for Secret.
-	SecretSchema *schema.Structural
+// SecretResourceInfo describes the Secret resource type.
+var SecretResourceInfo = types.ResourceInfo{
+	GVK:        GroupVersion.WithKind("Secret"),
+	Plural:     "secrets",
+	Singular:   "secret",
+	Namespaced: true,
+	SchemaYAML: SecretSchemaYAML,
+}
 
-	// ServiceAccountSchema is the parsed structural schema for ServiceAccount.
-	ServiceAccountSchema *schema.Structural
-)
-
-func init() {
-	var err error
-
-	// Parse ClusterRoleBinding schema
-	var clusterrolebindingPropsV1 apiextv1.JSONSchemaProps
-	if err := yaml.Unmarshal([]byte(ClusterRoleBindingSchemaYAML), &clusterrolebindingPropsV1); err != nil {
-		panic("failed to unmarshal ClusterRoleBinding schema: " + err.Error())
-	}
-	var clusterrolebindingProps apiext.JSONSchemaProps
-	if err := apiextv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(&clusterrolebindingPropsV1, &clusterrolebindingProps, nil); err != nil {
-		panic("failed to convert ClusterRoleBinding schema: " + err.Error())
-	}
-	ClusterRoleBindingSchema, err = schema.NewStructural(&clusterrolebindingProps)
-	if err != nil {
-		panic("failed to create structural schema for ClusterRoleBinding: " + err.Error())
-	}
-
-	// Parse ClusterRole schema
-	var clusterrolePropsV1 apiextv1.JSONSchemaProps
-	if err := yaml.Unmarshal([]byte(ClusterRoleSchemaYAML), &clusterrolePropsV1); err != nil {
-		panic("failed to unmarshal ClusterRole schema: " + err.Error())
-	}
-	var clusterroleProps apiext.JSONSchemaProps
-	if err := apiextv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(&clusterrolePropsV1, &clusterroleProps, nil); err != nil {
-		panic("failed to convert ClusterRole schema: " + err.Error())
-	}
-	ClusterRoleSchema, err = schema.NewStructural(&clusterroleProps)
-	if err != nil {
-		panic("failed to create structural schema for ClusterRole: " + err.Error())
-	}
-
-	// Parse RoleBinding schema
-	var rolebindingPropsV1 apiextv1.JSONSchemaProps
-	if err := yaml.Unmarshal([]byte(RoleBindingSchemaYAML), &rolebindingPropsV1); err != nil {
-		panic("failed to unmarshal RoleBinding schema: " + err.Error())
-	}
-	var rolebindingProps apiext.JSONSchemaProps
-	if err := apiextv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(&rolebindingPropsV1, &rolebindingProps, nil); err != nil {
-		panic("failed to convert RoleBinding schema: " + err.Error())
-	}
-	RoleBindingSchema, err = schema.NewStructural(&rolebindingProps)
-	if err != nil {
-		panic("failed to create structural schema for RoleBinding: " + err.Error())
-	}
-
-	// Parse Role schema
-	var rolePropsV1 apiextv1.JSONSchemaProps
-	if err := yaml.Unmarshal([]byte(RoleSchemaYAML), &rolePropsV1); err != nil {
-		panic("failed to unmarshal Role schema: " + err.Error())
-	}
-	var roleProps apiext.JSONSchemaProps
-	if err := apiextv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(&rolePropsV1, &roleProps, nil); err != nil {
-		panic("failed to convert Role schema: " + err.Error())
-	}
-	RoleSchema, err = schema.NewStructural(&roleProps)
-	if err != nil {
-		panic("failed to create structural schema for Role: " + err.Error())
-	}
-
-	// Parse Secret schema
-	var secretPropsV1 apiextv1.JSONSchemaProps
-	if err := yaml.Unmarshal([]byte(SecretSchemaYAML), &secretPropsV1); err != nil {
-		panic("failed to unmarshal Secret schema: " + err.Error())
-	}
-	var secretProps apiext.JSONSchemaProps
-	if err := apiextv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(&secretPropsV1, &secretProps, nil); err != nil {
-		panic("failed to convert Secret schema: " + err.Error())
-	}
-	SecretSchema, err = schema.NewStructural(&secretProps)
-	if err != nil {
-		panic("failed to create structural schema for Secret: " + err.Error())
-	}
-
-	// Parse ServiceAccount schema
-	var serviceaccountPropsV1 apiextv1.JSONSchemaProps
-	if err := yaml.Unmarshal([]byte(ServiceAccountSchemaYAML), &serviceaccountPropsV1); err != nil {
-		panic("failed to unmarshal ServiceAccount schema: " + err.Error())
-	}
-	var serviceaccountProps apiext.JSONSchemaProps
-	if err := apiextv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(&serviceaccountPropsV1, &serviceaccountProps, nil); err != nil {
-		panic("failed to convert ServiceAccount schema: " + err.Error())
-	}
-	ServiceAccountSchema, err = schema.NewStructural(&serviceaccountProps)
-	if err != nil {
-		panic("failed to create structural schema for ServiceAccount: " + err.Error())
-	}
+// ServiceAccountResourceInfo describes the ServiceAccount resource type.
+var ServiceAccountResourceInfo = types.ResourceInfo{
+	GVK:        GroupVersion.WithKind("ServiceAccount"),
+	Plural:     "serviceaccounts",
+	Singular:   "serviceaccount",
+	Namespaced: true,
+	SchemaYAML: ServiceAccountSchemaYAML,
 }
 
 // GetResourceInfos returns ResourceInfo definitions for all types in this package.
 // This can be used to configure an API server with these resources.
 func GetResourceInfos() []types.ResourceInfo {
 	return []types.ResourceInfo{
-		{
-			GVK:        GroupVersion.WithKind("ClusterRoleBinding"),
-			Plural:     ClusterRoleBindingPlural,
-			Singular:   ClusterRoleBindingSingular,
-			Namespaced: false,
-			SchemaYAML: ClusterRoleBindingSchemaYAML,
-		},
-		{
-			GVK:        GroupVersion.WithKind("ClusterRole"),
-			Plural:     ClusterRolePlural,
-			Singular:   ClusterRoleSingular,
-			Namespaced: false,
-			SchemaYAML: ClusterRoleSchemaYAML,
-		},
-		{
-			GVK:        GroupVersion.WithKind("RoleBinding"),
-			Plural:     RoleBindingPlural,
-			Singular:   RoleBindingSingular,
-			Namespaced: true,
-			SchemaYAML: RoleBindingSchemaYAML,
-		},
-		{
-			GVK:        GroupVersion.WithKind("Role"),
-			Plural:     RolePlural,
-			Singular:   RoleSingular,
-			Namespaced: true,
-			SchemaYAML: RoleSchemaYAML,
-		},
-		{
-			GVK:        GroupVersion.WithKind("Secret"),
-			Plural:     SecretPlural,
-			Singular:   SecretSingular,
-			Namespaced: true,
-			SchemaYAML: SecretSchemaYAML,
-		},
-		{
-			GVK:        GroupVersion.WithKind("ServiceAccount"),
-			Plural:     ServiceAccountPlural,
-			Singular:   ServiceAccountSingular,
-			Namespaced: true,
-			SchemaYAML: ServiceAccountSchemaYAML,
-		},
+		ClusterRoleBindingResourceInfo,
+		ClusterRoleResourceInfo,
+		RoleBindingResourceInfo,
+		RoleResourceInfo,
+		SecretResourceInfo,
+		ServiceAccountResourceInfo,
 	}
 }

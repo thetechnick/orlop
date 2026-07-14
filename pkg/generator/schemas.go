@@ -180,10 +180,6 @@ func (g *Generator) generateSchemaGoFile(outputPath, packageDir string, schemas 
 	source.WriteString("import (\n")
 	source.WriteString("\t_ \"embed\"\n\n")
 	source.WriteString(fmt.Sprintf("\t%q\n", g.typesImportPath))
-	source.WriteString("\tapiext \"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions\"\n")
-	source.WriteString("\tapiextv1 \"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1\"\n")
-	source.WriteString("\t\"k8s.io/apiextensions-apiserver/pkg/apiserver/schema\"\n")
-	source.WriteString("\t\"sigs.k8s.io/yaml\"\n")
 	source.WriteString(")\n\n")
 
 	// Generate constants for all schemas
@@ -205,14 +201,6 @@ func (g *Generator) generateSchemaGoFile(outputPath, packageDir string, schemas 
 		if err := os.WriteFile(schemaFilePath, schemaYAML, 0644); err != nil {
 			return fmt.Errorf("failed to write schema file for %s: %w", s.typeName, err)
 		}
-
-		// Plural name constant
-		source.WriteString(fmt.Sprintf("// %sPlural is the plural name for %s resources.\n", s.typeName, s.typeName))
-		source.WriteString(fmt.Sprintf("const %sPlural = %q\n\n", s.typeName, s.plural))
-
-		// Singular name constant
-		source.WriteString(fmt.Sprintf("// %sSingular is the singular name for %s resources.\n", s.typeName, s.typeName))
-		source.WriteString(fmt.Sprintf("const %sSingular = %q\n\n", s.typeName, s.singular))
 	}
 
 	// Add go:embed directives and variables
@@ -224,42 +212,17 @@ func (g *Generator) generateSchemaGoFile(outputPath, packageDir string, schemas 
 	}
 	source.WriteString(")\n\n")
 
-	// Generate variables
-	source.WriteString("var (\n")
-	for i, s := range schemas {
-		source.WriteString(fmt.Sprintf("\t// %sSchema is the parsed structural schema for %s.\n", s.typeName, s.typeName))
-		source.WriteString(fmt.Sprintf("\t%sSchema *schema.Structural\n", s.typeName))
-		if i < len(schemas)-1 {
-			source.WriteString("\n")
-		}
+	// Generate individual ResourceInfo variables
+	for _, s := range schemas {
+		source.WriteString(fmt.Sprintf("// %sResourceInfo describes the %s resource type.\n", s.typeName, s.typeName))
+		source.WriteString(fmt.Sprintf("var %sResourceInfo = types.ResourceInfo{\n", s.typeName))
+		source.WriteString(fmt.Sprintf("\tGVK:        GroupVersion.WithKind(%q),\n", s.typeName))
+		source.WriteString(fmt.Sprintf("\tPlural:     %q,\n", s.plural))
+		source.WriteString(fmt.Sprintf("\tSingular:   %q,\n", s.singular))
+		source.WriteString(fmt.Sprintf("\tNamespaced: %t,\n", s.namespaced))
+		source.WriteString(fmt.Sprintf("\tSchemaYAML: %sSchemaYAML,\n", s.typeName))
+		source.WriteString("}\n\n")
 	}
-	source.WriteString(")\n\n")
-
-	// Generate init function
-	source.WriteString("func init() {\n")
-	source.WriteString("\tvar err error\n\n")
-
-	for i, s := range schemas {
-		varName := strings.ToLower(s.typeName)
-		source.WriteString(fmt.Sprintf("\t// Parse %s schema\n", s.typeName))
-		source.WriteString(fmt.Sprintf("\tvar %sPropsV1 apiextv1.JSONSchemaProps\n", varName))
-		source.WriteString(fmt.Sprintf("\tif err := yaml.Unmarshal([]byte(%sSchemaYAML), &%sPropsV1); err != nil {\n", s.typeName, varName))
-		source.WriteString(fmt.Sprintf("\t\tpanic(\"failed to unmarshal %s schema: \" + err.Error())\n", s.typeName))
-		source.WriteString("\t}\n")
-		source.WriteString(fmt.Sprintf("\tvar %sProps apiext.JSONSchemaProps\n", varName))
-		source.WriteString(fmt.Sprintf("\tif err := apiextv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(&%sPropsV1, &%sProps, nil); err != nil {\n", varName, varName))
-		source.WriteString(fmt.Sprintf("\t\tpanic(\"failed to convert %s schema: \" + err.Error())\n", s.typeName))
-		source.WriteString("\t}\n")
-		source.WriteString(fmt.Sprintf("\t%sSchema, err = schema.NewStructural(&%sProps)\n", s.typeName, varName))
-		source.WriteString("\tif err != nil {\n")
-		source.WriteString(fmt.Sprintf("\t\tpanic(\"failed to create structural schema for %s: \" + err.Error())\n", s.typeName))
-		source.WriteString("\t}\n")
-
-		if i < len(schemas)-1 {
-			source.WriteString("\n")
-		}
-	}
-	source.WriteString("}\n\n")
 
 	// Generate GetResourceInfos function
 	source.WriteString("// GetResourceInfos returns ResourceInfo definitions for all types in this package.\n")
@@ -268,13 +231,7 @@ func (g *Generator) generateSchemaGoFile(outputPath, packageDir string, schemas 
 	source.WriteString("\treturn []types.ResourceInfo{\n")
 
 	for _, s := range schemas {
-		source.WriteString("\t\t{\n")
-		source.WriteString(fmt.Sprintf("\t\t\tGVK:        GroupVersion.WithKind(%q),\n", s.typeName))
-		source.WriteString(fmt.Sprintf("\t\t\tPlural:     %sPlural,\n", s.typeName))
-		source.WriteString(fmt.Sprintf("\t\t\tSingular:   %sSingular,\n", s.typeName))
-		source.WriteString(fmt.Sprintf("\t\t\tNamespaced: %t,\n", s.namespaced))
-		source.WriteString(fmt.Sprintf("\t\t\tSchemaYAML: %sSchemaYAML,\n", s.typeName))
-		source.WriteString("\t\t},\n")
+		source.WriteString(fmt.Sprintf("\t\t%sResourceInfo,\n", s.typeName))
 	}
 
 	source.WriteString("\t}\n")

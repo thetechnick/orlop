@@ -6,23 +6,7 @@ import (
 	_ "embed"
 
 	"github.com/thetechnick/orlop/pkg/apiserver/types"
-	apiext "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
-	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
-	"sigs.k8s.io/yaml"
 )
-
-// ObjectPlural is the plural name for Object resources.
-const ObjectPlural = "objects"
-
-// ObjectSingular is the singular name for Object resources.
-const ObjectSingular = "object"
-
-// OtherPlural is the plural name for Other resources.
-const OtherPlural = "others"
-
-// OtherSingular is the singular name for Other resources.
-const OtherSingular = "other"
 
 var (
 	// ObjectSchemaYAML contains the OpenAPI v3 schema for Object.
@@ -35,63 +19,29 @@ var (
 
 )
 
-var (
-	// ObjectSchema is the parsed structural schema for Object.
-	ObjectSchema *schema.Structural
+// ObjectResourceInfo describes the Object resource type.
+var ObjectResourceInfo = types.ResourceInfo{
+	GVK:        GroupVersion.WithKind("Object"),
+	Plural:     "objects",
+	Singular:   "object",
+	Namespaced: true,
+	SchemaYAML: ObjectSchemaYAML,
+}
 
-	// OtherSchema is the parsed structural schema for Other.
-	OtherSchema *schema.Structural
-)
-
-func init() {
-	var err error
-
-	// Parse Object schema
-	var objectPropsV1 apiextv1.JSONSchemaProps
-	if err := yaml.Unmarshal([]byte(ObjectSchemaYAML), &objectPropsV1); err != nil {
-		panic("failed to unmarshal Object schema: " + err.Error())
-	}
-	var objectProps apiext.JSONSchemaProps
-	if err := apiextv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(&objectPropsV1, &objectProps, nil); err != nil {
-		panic("failed to convert Object schema: " + err.Error())
-	}
-	ObjectSchema, err = schema.NewStructural(&objectProps)
-	if err != nil {
-		panic("failed to create structural schema for Object: " + err.Error())
-	}
-
-	// Parse Other schema
-	var otherPropsV1 apiextv1.JSONSchemaProps
-	if err := yaml.Unmarshal([]byte(OtherSchemaYAML), &otherPropsV1); err != nil {
-		panic("failed to unmarshal Other schema: " + err.Error())
-	}
-	var otherProps apiext.JSONSchemaProps
-	if err := apiextv1.Convert_v1_JSONSchemaProps_To_apiextensions_JSONSchemaProps(&otherPropsV1, &otherProps, nil); err != nil {
-		panic("failed to convert Other schema: " + err.Error())
-	}
-	OtherSchema, err = schema.NewStructural(&otherProps)
-	if err != nil {
-		panic("failed to create structural schema for Other: " + err.Error())
-	}
+// OtherResourceInfo describes the Other resource type.
+var OtherResourceInfo = types.ResourceInfo{
+	GVK:        GroupVersion.WithKind("Other"),
+	Plural:     "others",
+	Singular:   "other",
+	Namespaced: true,
+	SchemaYAML: OtherSchemaYAML,
 }
 
 // GetResourceInfos returns ResourceInfo definitions for all types in this package.
 // This can be used to configure an API server with these resources.
 func GetResourceInfos() []types.ResourceInfo {
 	return []types.ResourceInfo{
-		{
-			GVK:        GroupVersion.WithKind("Object"),
-			Plural:     ObjectPlural,
-			Singular:   ObjectSingular,
-			Namespaced: true,
-			SchemaYAML: ObjectSchemaYAML,
-		},
-		{
-			GVK:        GroupVersion.WithKind("Other"),
-			Plural:     OtherPlural,
-			Singular:   OtherSingular,
-			Namespaced: true,
-			SchemaYAML: OtherSchemaYAML,
-		},
+		ObjectResourceInfo,
+		OtherResourceInfo,
 	}
 }
