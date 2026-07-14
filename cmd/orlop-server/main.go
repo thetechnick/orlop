@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -12,17 +13,18 @@ import (
 
 	"github.com/go-logr/stdr"
 	"github.com/thetechnick/orlop/pkg/apiserver"
+	"github.com/thetechnick/orlop/pkg/apiserver/optional"
 )
 
 func main() {
 	var (
-		address        string
-		privatePort    int
-		publicPort     int
-		corsOrigins    string
-		enablePublic   bool
-		enableRBAC     bool
-		enableAuthn    bool
+		address     string
+		privatePort int
+		publicPort  int
+		corsOrigins string
+		enablePublic bool
+		enableRBAC  bool
+		enableAuthn bool
 	)
 
 	flag.StringVar(&address, "address", "0.0.0.0", "address to bind to")
@@ -34,10 +36,8 @@ func main() {
 	flag.StringVar(&corsOrigins, "cors-origins", "*", "comma-separated list of allowed CORS origins")
 	flag.Parse()
 
-	// Setup logger using standard library logger backend
 	logger := stdr.New(nil)
 
-	// Parse CORS origins
 	origins := []string{}
 	if corsOrigins != "" {
 		origins = strings.Split(corsOrigins, ",")
@@ -46,20 +46,50 @@ func main() {
 		}
 	}
 
-	// Create server with resource configuration
+	privateScheme := getPrivateScheme()
+	privateRegistry := apiserver.NewResourceRegistry(privateScheme, apiserver.WithLogger(logger))
+	for _, res := range getPrivateResources() {
+		if err := privateRegistry.Register(res); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to register private resource: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	var middleware []func(http.Handler) http.Handler
+
+	if enableAuthn {
+		mw, err := optional.SetupAuthentication(privateRegistry, logger)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to setup authentication: %v\n", err)
+			os.Exit(1)
+		}
+		middleware = append(middleware, mw)
+		logger.Info("ServiceAccount authentication enabled")
+	}
+
+	if enableRBAC {
+		mw, err := optional.SetupRBAC(privateRegistry, logger)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to setup RBAC: %v\n", err)
+			os.Exit(1)
+		}
+		middleware = append(middleware, mw)
+		logger.Info("RBAC authorization enabled")
+	}
+
 	opts := apiserver.Options{
-		Address:              address,
-		PrivatePort:          privatePort,
-		PublicPort:           publicPort,
-		CORSOrigins:          origins,
-		EnablePublicAPI:      enablePublic,
-		EnableRBAC:           enableRBAC,
-		EnableAuthentication: enableAuthn,
-		PrivateResources:     getPrivateResources(),
-		PublicResources:      getPublicResources(),
-		PrivateScheme:        getPrivateScheme(),
-		PublicScheme:         getPublicScheme(),
-		Logger:               logger,
+		Address:           address,
+		PrivatePort:       privatePort,
+		PublicPort:        publicPort,
+		CORSOrigins:       origins,
+		EnablePublicAPI:   enablePublic,
+		PrivateRegistry:   privateRegistry,
+		PrivateMiddleware: middleware,
+		PublicMiddleware:  middleware,
+		PublicResources:   getPublicResources(),
+		PrivateScheme:     privateScheme,
+		PublicScheme:      getPublicScheme(),
+		Logger:            logger,
 	}
 
 	server, err := apiserver.New(opts)
@@ -68,11 +98,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Setup signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	// Start server in goroutine
 	go func() {
 		if err := server.Run(); err != nil {
 			logger.Error(err, "Server error")
@@ -80,11 +108,9 @@ func main() {
 		}
 	}()
 
-	// Wait for signal
 	<-sigChan
 	logger.Info("Shutting down server")
 
-	// Graceful shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

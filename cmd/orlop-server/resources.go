@@ -1,6 +1,7 @@
 package main
 
 import (
+	rbacv1 "github.com/thetechnick/orlop/apis/private/rbac/v1"
 	privatev1 "github.com/thetechnick/orlop/apis/private/test/v1"
 	publicv1 "github.com/thetechnick/orlop/apis/public/test/v1"
 	"github.com/thetechnick/orlop/pkg/apiserver"
@@ -23,6 +24,7 @@ func getPublicResources() []apiserver.ResourceInfo {
 func getPrivateScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	privatev1.AddToScheme(scheme)
+	rbacv1.AddToScheme(scheme)
 	return scheme
 }
 

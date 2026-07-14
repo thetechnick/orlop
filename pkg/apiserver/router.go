@@ -12,23 +12,13 @@ import (
 )
 
 // setupRouter configures the HTTP router with all endpoints.
-func setupRouter(registry *ResourceRegistry, corsOrigins []string, authnMiddleware, rbacMiddleware func(http.Handler) http.Handler, customMiddleware []func(http.Handler) http.Handler) (chi.Router, error) {
+func setupRouter(registry *ResourceRegistry, corsOrigins []string, customMiddleware []func(http.Handler) http.Handler) (chi.Router, error) {
 	r := chi.NewRouter()
 
 	// Add CORS middleware
 	r.Use(middleware.CORS(middleware.CORSOptions{
 		AllowedOrigins: corsOrigins,
 	}))
-
-	// Add authentication middleware if provided (must come before RBAC)
-	if authnMiddleware != nil {
-		r.Use(authnMiddleware)
-	}
-
-	// Add RBAC middleware if provided
-	if rbacMiddleware != nil {
-		r.Use(rbacMiddleware)
-	}
 
 	for _, mw := range customMiddleware {
 		r.Use(mw)
@@ -131,23 +121,13 @@ func setupRouter(registry *ResourceRegistry, corsOrigins []string, authnMiddlewa
 // setupConvertingRouter configures the HTTP router with converting handlers for public API.
 // publicRegistry defines the public API types and schemas.
 // privateRegistry provides the shared storage backend.
-func setupConvertingRouter(publicRegistry *ResourceRegistry, privateRegistry *ResourceRegistry, converter *conversion.Converter, privateScheme *runtime.Scheme, corsOrigins []string, authnMiddleware, rbacMiddleware func(http.Handler) http.Handler, customMiddleware []func(http.Handler) http.Handler) (chi.Router, error) {
+func setupConvertingRouter(publicRegistry *ResourceRegistry, privateRegistry *ResourceRegistry, converter *conversion.Converter, privateScheme *runtime.Scheme, corsOrigins []string, customMiddleware []func(http.Handler) http.Handler) (chi.Router, error) {
 	r := chi.NewRouter()
 
 	// Add CORS middleware
 	r.Use(middleware.CORS(middleware.CORSOptions{
 		AllowedOrigins: corsOrigins,
 	}))
-
-	// Add authentication middleware if provided (must come before RBAC)
-	if authnMiddleware != nil {
-		r.Use(authnMiddleware)
-	}
-
-	// Add RBAC middleware if provided
-	if rbacMiddleware != nil {
-		r.Use(rbacMiddleware)
-	}
 
 	for _, mw := range customMiddleware {
 		r.Use(mw)
