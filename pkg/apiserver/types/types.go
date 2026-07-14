@@ -12,6 +12,8 @@ type ResourceInfo struct {
 	Plural string
 	// Singular is the singular name for the resource (e.g., "object")
 	Singular string
+	// Namespaced indicates whether the resource is namespace-scoped (true) or cluster-scoped (false).
+	Namespaced bool
 	// SchemaYAML is the OpenAPI v3 schema in YAML format
 	SchemaYAML string
 }

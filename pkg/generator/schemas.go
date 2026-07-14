@@ -14,10 +14,11 @@ import (
 )
 
 type schemaInfo struct {
-	typeName string
-	plural   string
-	singular string
-	schema   *apiextv1.JSONSchemaProps
+	typeName   string
+	plural     string
+	singular   string
+	namespaced bool
+	schema     *apiextv1.JSONSchemaProps
 }
 
 func (g *Generator) generateSchemas(rootPath string) error {
@@ -140,10 +141,11 @@ func (g *Generator) embedSchemas(crdDir string, targetDir string) error {
 		}
 
 		schemas = append(schemas, schemaInfo{
-			typeName: crd.Spec.Names.Kind,
-			plural:   crd.Spec.Names.Plural,
-			singular: crd.Spec.Names.Singular,
-			schema:   version.Schema.OpenAPIV3Schema,
+			typeName:   crd.Spec.Names.Kind,
+			plural:     crd.Spec.Names.Plural,
+			singular:   crd.Spec.Names.Singular,
+			namespaced: crd.Spec.Scope == apiextv1.NamespaceScoped,
+			schema:     version.Schema.OpenAPIV3Schema,
 		})
 
 		// Remove the YAML file after extracting schema
@@ -270,6 +272,7 @@ func (g *Generator) generateSchemaGoFile(outputPath, packageDir string, schemas 
 		source.WriteString(fmt.Sprintf("\t\t\tGVK:        GroupVersion.WithKind(%q),\n", s.typeName))
 		source.WriteString(fmt.Sprintf("\t\t\tPlural:     %sPlural,\n", s.typeName))
 		source.WriteString(fmt.Sprintf("\t\t\tSingular:   %sSingular,\n", s.typeName))
+		source.WriteString(fmt.Sprintf("\t\t\tNamespaced: %t,\n", s.namespaced))
 		source.WriteString(fmt.Sprintf("\t\t\tSchemaYAML: %sSchemaYAML,\n", s.typeName))
 		source.WriteString("\t\t},\n")
 	}

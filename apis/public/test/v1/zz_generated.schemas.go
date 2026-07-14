@@ -83,12 +83,14 @@ func GetResourceInfos() []types.ResourceInfo {
 			GVK:        GroupVersion.WithKind("Object"),
 			Plural:     ObjectPlural,
 			Singular:   ObjectSingular,
+			Namespaced: true,
 			SchemaYAML: ObjectSchemaYAML,
 		},
 		{
 			GVK:        GroupVersion.WithKind("Other"),
 			Plural:     OtherPlural,
 			Singular:   OtherSingular,
+			Namespaced: true,
 			SchemaYAML: OtherSchemaYAML,
 		},
 	}
