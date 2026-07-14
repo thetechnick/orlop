@@ -161,7 +161,7 @@ func (h *DiscoveryHandler) APIResourceList(w http.ResponseWriter, r *http.Reques
 				Name:         res.Plural,
 				SingularName: res.Singular,
 				Kind:         res.GVK.Kind,
-				Namespaced:   true,
+				Namespaced:   res.Namespaced,
 				Verbs:        metav1.Verbs{"create", "delete", "get", "list", "patch", "update", "watch"},
 			}
 
@@ -173,7 +173,7 @@ func (h *DiscoveryHandler) APIResourceList(w http.ResponseWriter, r *http.Reques
 				Name:         res.Plural + "/status",
 				SingularName: res.Singular,
 				Kind:         res.GVK.Kind,
-				Namespaced:   true,
+				Namespaced:   res.Namespaced,
 				Verbs:        metav1.Verbs{"get", "patch", "update"},
 			}
 			resourceList.APIResources = append(resourceList.APIResources, statusResource)

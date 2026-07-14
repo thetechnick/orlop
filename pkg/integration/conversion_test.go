@@ -48,6 +48,7 @@ func ensureConversionTestServer(t *testing.T) {
 			},
 			Plural:     privatev1.ObjectResourceInfo.Plural,
 			Singular:   "object",
+			Namespaced: true,
 			SchemaYAML: privatev1.ObjectSchemaYAML,
 		},
 	}
@@ -61,6 +62,7 @@ func ensureConversionTestServer(t *testing.T) {
 			},
 			Plural:     publicv1.ObjectResourceInfo.Plural,
 			Singular:   "object",
+			Namespaced: true,
 			SchemaYAML: publicv1.ObjectSchemaYAML,
 		},
 	}

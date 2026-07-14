@@ -57,43 +57,57 @@ func setupRouter(registry *ResourceRegistry, corsOrigins []string, authnMiddlewa
 				discoveryHandler.APIResourceList(w, req, group, version)
 			})
 
-			// Cluster-scoped LIST endpoints (across all namespaces)
+			// Cluster-scoped resources get CRUD directly under the GV path
 			for _, res := range resources {
-				handler, err := registry.CreateHandler(res)
-				if err != nil {
-					// Log error but continue with other resources
+				if res.Namespaced {
 					continue
 				}
-
+				handler, err := registry.CreateHandler(res)
+				if err != nil {
+					continue
+				}
 				plural := res.Plural
-
-				// Cluster-scoped LIST endpoint
+				r.Post("/"+plural, handler.Create)
 				r.Get("/"+plural, handler.List)
+				r.Get("/"+plural+"/{name}", handler.Get)
+				r.Put("/"+plural+"/{name}", handler.Update)
+				r.Patch("/"+plural+"/{name}", handler.Patch)
+				r.Delete("/"+plural+"/{name}", handler.Delete)
+				r.Put("/"+plural+"/{name}/status", handler.UpdateStatus)
 			}
 
-			r.Route("/namespaces/{namespace}", func(r chi.Router) {
-				// Register routes for each resource
-				for _, res := range resources {
-					handler, err := registry.CreateHandler(res)
-					if err != nil {
-						// Log error but continue with other resources
-						continue
-					}
-
-					plural := res.Plural
-
-					// CRUD endpoints
-					r.Post("/"+plural, handler.Create)
-					r.Get("/"+plural, handler.List)
-					r.Get("/"+plural+"/{name}", handler.Get)
-					r.Put("/"+plural+"/{name}", handler.Update)
-					r.Patch("/"+plural+"/{name}", handler.Patch)
-					r.Delete("/"+plural+"/{name}", handler.Delete)
-
-					// Status subresource
-					r.Put("/"+plural+"/{name}/status", handler.UpdateStatus)
+			// Namespaced resources: LIST across all namespaces + CRUD under /namespaces/{namespace}
+			var namespacedHandlers []struct {
+				plural  string
+				handler *handlers.ResourceHandler
+			}
+			for _, res := range resources {
+				if !res.Namespaced {
+					continue
 				}
-			})
+				handler, err := registry.CreateHandler(res)
+				if err != nil {
+					continue
+				}
+				r.Get("/"+res.Plural, handler.List)
+				namespacedHandlers = append(namespacedHandlers, struct {
+					plural  string
+					handler *handlers.ResourceHandler
+				}{res.Plural, handler})
+			}
+			if len(namespacedHandlers) > 0 {
+				r.Route("/namespaces/{namespace}", func(r chi.Router) {
+					for _, nh := range namespacedHandlers {
+						r.Post("/"+nh.plural, nh.handler.Create)
+						r.Get("/"+nh.plural, nh.handler.List)
+						r.Get("/"+nh.plural+"/{name}", nh.handler.Get)
+						r.Put("/"+nh.plural+"/{name}", nh.handler.Update)
+						r.Patch("/"+nh.plural+"/{name}", nh.handler.Patch)
+						r.Delete("/"+nh.plural+"/{name}", nh.handler.Delete)
+						r.Put("/"+nh.plural+"/{name}/status", nh.handler.UpdateStatus)
+					}
+				})
+			}
 		})
 
 		// Per-group discovery endpoint
@@ -158,45 +172,59 @@ func setupConvertingRouter(publicRegistry *ResourceRegistry, privateRegistry *Re
 				discoveryHandler.APIResourceList(w, req, group, version)
 			})
 
-			// Cluster-scoped LIST endpoints (across all namespaces)
+			// Cluster-scoped resources get CRUD directly under the GV path
 			for _, res := range resources {
-				handlerInterface, err := createConvertingHandlerWithSharedStore(publicRegistry, privateRegistry, converter, privateScheme, res)
-				if err != nil {
-					// Log error but continue with other resources
+				if res.Namespaced {
 					continue
 				}
-
+				handlerInterface, err := createConvertingHandlerWithSharedStore(publicRegistry, privateRegistry, converter, privateScheme, res)
+				if err != nil {
+					continue
+				}
 				handler := handlerInterface.(*handlers.ConvertingResourceHandler)
 				plural := res.Plural
-
-				// Cluster-scoped LIST endpoint
+				r.Post("/"+plural, handler.Create)
 				r.Get("/"+plural, handler.List)
+				r.Get("/"+plural+"/{name}", handler.Get)
+				r.Put("/"+plural+"/{name}", handler.Update)
+				r.Patch("/"+plural+"/{name}", handler.Patch)
+				r.Delete("/"+plural+"/{name}", handler.Delete)
+				r.Put("/"+plural+"/{name}/status", handler.UpdateStatus)
 			}
 
-			r.Route("/namespaces/{namespace}", func(r chi.Router) {
-				// Register routes for each resource
-				for _, res := range resources {
-					handlerInterface, err := createConvertingHandlerWithSharedStore(publicRegistry, privateRegistry, converter, privateScheme, res)
-					if err != nil {
-						// Log error but continue with other resources
-						continue
-					}
-
-					handler := handlerInterface.(*handlers.ConvertingResourceHandler)
-					plural := res.Plural
-
-					// CRUD endpoints
-					r.Post("/"+plural, handler.Create)
-					r.Get("/"+plural, handler.List)
-					r.Get("/"+plural+"/{name}", handler.Get)
-					r.Put("/"+plural+"/{name}", handler.Update)
-					r.Patch("/"+plural+"/{name}", handler.Patch)
-					r.Delete("/"+plural+"/{name}", handler.Delete)
-
-					// Status subresource
-					r.Put("/"+plural+"/{name}/status", handler.UpdateStatus)
+			// Namespaced resources: LIST across all namespaces + CRUD under /namespaces/{namespace}
+			var namespacedHandlers []struct {
+				plural  string
+				handler *handlers.ConvertingResourceHandler
+			}
+			for _, res := range resources {
+				if !res.Namespaced {
+					continue
 				}
-			})
+				handlerInterface, err := createConvertingHandlerWithSharedStore(publicRegistry, privateRegistry, converter, privateScheme, res)
+				if err != nil {
+					continue
+				}
+				handler := handlerInterface.(*handlers.ConvertingResourceHandler)
+				r.Get("/"+res.Plural, handler.List)
+				namespacedHandlers = append(namespacedHandlers, struct {
+					plural  string
+					handler *handlers.ConvertingResourceHandler
+				}{res.Plural, handler})
+			}
+			if len(namespacedHandlers) > 0 {
+				r.Route("/namespaces/{namespace}", func(r chi.Router) {
+					for _, nh := range namespacedHandlers {
+						r.Post("/"+nh.plural, nh.handler.Create)
+						r.Get("/"+nh.plural, nh.handler.List)
+						r.Get("/"+nh.plural+"/{name}", nh.handler.Get)
+						r.Put("/"+nh.plural+"/{name}", nh.handler.Update)
+						r.Patch("/"+nh.plural+"/{name}", nh.handler.Patch)
+						r.Delete("/"+nh.plural+"/{name}", nh.handler.Delete)
+						r.Put("/"+nh.plural+"/{name}/status", nh.handler.UpdateStatus)
+					}
+				})
+			}
 		})
 
 		// Per-group discovery endpoint

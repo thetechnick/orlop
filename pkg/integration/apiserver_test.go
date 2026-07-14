@@ -39,6 +39,7 @@ func TestMain(m *testing.M) {
 				Kind:    "Object",
 			},
 			Plural:     privatev1.ObjectResourceInfo.Plural,
+			Namespaced: true,
 			SchemaYAML: privatev1.ObjectSchemaYAML,
 		},
 		{
@@ -48,6 +49,7 @@ func TestMain(m *testing.M) {
 				Kind:    "Other",
 			},
 			Plural:     privatev1.OtherResourceInfo.Plural,
+			Namespaced: true,
 			SchemaYAML: privatev1.OtherSchemaYAML,
 		},
 	}
