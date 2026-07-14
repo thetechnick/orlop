@@ -123,7 +123,7 @@ func (g *Generator) Generate() error {
 			return err
 		}
 
-		outputPath := filepath.Join(g.outputDir, relPath)
+		outputPath := filepath.Join(g.outputDir, prefixGenerated(relPath))
 
 		if err := g.processFile(path, outputPath); err != nil {
 			return fmt.Errorf("processing %s: %w", path, err)
@@ -137,7 +137,7 @@ func (g *Generator) Generate() error {
 			return err
 		}
 
-		outputPath := filepath.Join(g.outputDir, relPath)
+		outputPath := filepath.Join(g.outputDir, prefixGenerated(relPath))
 
 		if err := g.processAggregatorFile(path, outputPath); err != nil {
 			return fmt.Errorf("processing aggregator %s: %w", path, err)
@@ -690,6 +690,15 @@ func filterCommentsKeepNonOrlop(commentGroup *ast.CommentGroup) *ast.CommentGrou
 	}
 
 	return &ast.CommentGroup{List: filtered}
+}
+
+func prefixGenerated(relPath string) string {
+	dir := filepath.Dir(relPath)
+	base := filepath.Base(relPath)
+	if !strings.HasPrefix(base, "zz_generated.") {
+		base = "zz_generated." + base
+	}
+	return filepath.Join(dir, base)
 }
 
 func (g *Generator) generateReadme() error {

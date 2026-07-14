@@ -256,10 +256,6 @@ func determinePackageName(dir string) (string, error) {
 			continue
 		}
 
-		if strings.HasPrefix(entry.Name(), "zz_generated") {
-			continue
-		}
-
 		filePath := filepath.Join(dir, entry.Name())
 		data, err := os.ReadFile(filePath)
 		if err != nil {
