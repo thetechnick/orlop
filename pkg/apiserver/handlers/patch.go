@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"github.com/thetechnick/orlop/pkg/apiserver/constants"
+	"github.com/thetechnick/orlop/pkg/apiserver/types"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -65,7 +66,7 @@ func (h *ResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Process and update the object
-	h.processPatchedObject(w, namespace, name, patchedJSON)
+	h.processPatchedObject(w, r, namespace, name, patchedJSON, existing)
 }
 
 // applyPatch routes to the appropriate patch implementation based on Content-Type
@@ -104,7 +105,7 @@ func (h *ResourceHandler) applyPatch(contentType string, existing client.Object,
 }
 
 // processPatchedObject handles the common logic after a patch is applied
-func (h *ResourceHandler) processPatchedObject(w http.ResponseWriter, namespace, name string, patchedJSON []byte) {
+func (h *ResourceHandler) processPatchedObject(w http.ResponseWriter, r *http.Request, namespace, name string, patchedJSON []byte, existing client.Object) {
 	// Convert to map for schema processing
 	var objMap map[string]interface{}
 	if err := json.Unmarshal(patchedJSON, &objMap); err != nil {
@@ -130,6 +131,20 @@ func (h *ResourceHandler) processPatchedObject(w http.ResponseWriter, namespace,
 		return
 	}
 	clientObj := obj.(client.Object)
+
+	if d, ok := obj.(types.CustomDefaulter); ok {
+		if err := d.Default(r.Context()); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("defaulting failed: %v", err))
+			return
+		}
+	}
+
+	if v, ok := obj.(types.CustomValidator); ok {
+		if err := v.ValidateUpdate(r.Context(), existing); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("validation failed: %v", err))
+			return
+		}
+	}
 
 	// Ensure namespace and name are preserved
 	clientObj.SetNamespace(namespace)

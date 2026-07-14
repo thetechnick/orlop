@@ -15,13 +15,14 @@ import (
 	"github.com/thetechnick/orlop/pkg/apiserver/apply"
 	"github.com/thetechnick/orlop/pkg/apiserver/schema"
 	"github.com/thetechnick/orlop/pkg/apiserver/storage"
+	"github.com/thetechnick/orlop/pkg/apiserver/types"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -95,6 +96,20 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	clientObj := obj.(client.Object)
 
+	if d, ok := obj.(types.CustomDefaulter); ok {
+		if err := d.Default(r.Context()); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("defaulting failed: %v", err))
+			return
+		}
+	}
+
+	if v, ok := obj.(types.CustomValidator); ok {
+		if err := v.ValidateCreate(r.Context()); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("validation failed: %v", err))
+			return
+		}
+	}
+
 	// Set metadata
 	accessor, err := meta.Accessor(clientObj)
 	if err != nil {
@@ -109,7 +124,7 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	accessor.SetNamespace(namespace)
-	accessor.SetUID(types.UID(uuid.New().String()))
+	accessor.SetUID(k8stypes.UID(uuid.New().String()))
 	accessor.SetCreationTimestamp(metav1.Time{Time: time.Now()})
 	accessor.SetGeneration(1)
 
@@ -315,6 +330,20 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	clientObj := obj.(client.Object)
 
+	if d, ok := obj.(types.CustomDefaulter); ok {
+		if err := d.Default(r.Context()); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("defaulting failed: %v", err))
+			return
+		}
+	}
+
+	if v, ok := obj.(types.CustomValidator); ok {
+		if err := v.ValidateUpdate(r.Context(), existing); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("validation failed: %v", err))
+			return
+		}
+	}
+
 	// Set metadata
 	accessor, err := meta.Accessor(clientObj)
 	if err != nil {
@@ -462,7 +491,7 @@ func (h *ResourceHandler) ApplyPatch(w http.ResponseWriter, r *http.Request) {
 	// Save to storage (create or update)
 	if existing == nil {
 		// This is a create via apply
-		accessor.SetUID(types.UID(uuid.New().String()))
+		accessor.SetUID(k8stypes.UID(uuid.New().String()))
 		accessor.SetCreationTimestamp(metav1.Time{Time: time.Now()})
 		accessor.SetGeneration(1)
 
@@ -510,6 +539,13 @@ func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get object: %v", err))
 		}
 		return
+	}
+
+	if v, ok := existing.(types.CustomValidator); ok {
+		if err := v.ValidateDelete(r.Context()); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("validation failed: %v", err))
+			return
+		}
 	}
 
 	accessor, err := meta.Accessor(existing)

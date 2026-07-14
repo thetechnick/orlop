@@ -14,12 +14,13 @@ import (
 	"github.com/thetechnick/orlop/pkg/apiserver/conversion"
 	"github.com/thetechnick/orlop/pkg/apiserver/schema"
 	"github.com/thetechnick/orlop/pkg/apiserver/storage"
+	"github.com/thetechnick/orlop/pkg/apiserver/types"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	runtimeschema "k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -106,7 +107,7 @@ func (h *ConvertingResourceHandler) Create(w http.ResponseWriter, r *http.Reques
 	}
 
 	accessor.SetNamespace(namespace)
-	accessor.SetUID(types.UID(uuid.New().String()))
+	accessor.SetUID(k8stypes.UID(uuid.New().String()))
 	accessor.SetCreationTimestamp(metav1.Time{Time: time.Now()})
 	accessor.SetGeneration(1)
 
@@ -123,6 +124,20 @@ func (h *ConvertingResourceHandler) Create(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to convert to private: %v", err))
 		return
+	}
+
+	if d, ok := privateObj.(types.CustomDefaulter); ok {
+		if err := d.Default(r.Context()); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("defaulting failed: %v", err))
+			return
+		}
+	}
+
+	if v, ok := privateObj.(types.CustomValidator); ok {
+		if err := v.ValidateCreate(r.Context()); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("validation failed: %v", err))
+			return
+		}
 	}
 
 	// Set GVK on private object for storage
@@ -372,6 +387,20 @@ func (h *ConvertingResourceHandler) Update(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if d, ok := privateObj.(types.CustomDefaulter); ok {
+		if err := d.Default(r.Context()); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("defaulting failed: %v", err))
+			return
+		}
+	}
+
+	if v, ok := privateObj.(types.CustomValidator); ok {
+		if err := v.ValidateUpdate(r.Context(), existingPrivate); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("validation failed: %v", err))
+			return
+		}
+	}
+
 	// Check if spec changed and increment generation if so
 	existingAccessor, _ := meta.Accessor(existingPrivate)
 	privateAccessor, _ := meta.Accessor(privateObj)
@@ -495,6 +524,20 @@ func (h *ConvertingResourceHandler) Patch(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if d, ok := privateObj.(types.CustomDefaulter); ok {
+		if err := d.Default(r.Context()); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("defaulting failed: %v", err))
+			return
+		}
+	}
+
+	if v, ok := privateObj.(types.CustomValidator); ok {
+		if err := v.ValidateUpdate(r.Context(), existingPrivate); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("validation failed: %v", err))
+			return
+		}
+	}
+
 	// Check if spec changed and increment generation if so
 	existingAccessor, _ := meta.Accessor(existingPrivate)
 	privateAccessor, _ := meta.Accessor(privateObj)
@@ -535,6 +578,23 @@ func (h *ConvertingResourceHandler) Delete(w http.ResponseWriter, r *http.Reques
 	namespace := chi.URLParam(r, constants.URLParamNamespace)
 	name := chi.URLParam(r, constants.URLParamName)
 	h.logger.V(1).Info("[DELETE-CONVERTING] %s namespace=%s name=%s", h.gvk.Kind, namespace, name)
+
+	existing, err := h.store.Get(namespace, name)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get object: %v", err))
+		}
+		return
+	}
+
+	if v, ok := existing.(types.CustomValidator); ok {
+		if err := v.ValidateDelete(r.Context()); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("validation failed: %v", err))
+			return
+		}
+	}
 
 	if err := h.store.Delete(namespace, name); err != nil {
 		h.logger.V(1).Info("[DELETE-CONVERTING] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
