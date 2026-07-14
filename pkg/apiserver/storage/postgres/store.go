@@ -23,12 +23,13 @@ import (
 // PostgresStore implements ResourceStore using SQL database (PostgreSQL).
 // Stores resources as JSON in a single table with metadata columns for efficient querying.
 type PostgresStore struct {
-	db           *sql.DB
-	resourceType string
-	scheme       *runtime.Scheme
-	gvk          schema.GroupVersionKind
-	broadcaster  storage.EventBroadcaster
-	tableName    string
+	db               *sql.DB
+	resourceType     string
+	scheme           *runtime.Scheme
+	gvk              schema.GroupVersionKind
+	broadcaster      storage.EventBroadcaster
+	tableName        string
+	contextFilterKey any
 
 	// For resource version generation
 	mu                     sync.Mutex
@@ -37,12 +38,13 @@ type PostgresStore struct {
 
 // PostgresStoreConfig configures SQL storage backend.
 type PostgresStoreConfig struct {
-	DB           *sql.DB
-	ResourceType string
-	Scheme       *runtime.Scheme
-	GVK          schema.GroupVersionKind
-	Broadcaster  storage.EventBroadcaster
-	TableName    string // Optional: defaults to "resources_{resourceType}"
+	DB               *sql.DB
+	ResourceType     string
+	Scheme           *runtime.Scheme
+	GVK              schema.GroupVersionKind
+	Broadcaster      storage.EventBroadcaster
+	TableName        string // Optional: defaults to "resources_{resourceType}"
+	ContextFilterKey any    // Optional: context key for scoping operations
 }
 
 // NewPostgresStore creates a new SQL-backed resource store.
@@ -64,12 +66,13 @@ func NewPostgresStore(ctx context.Context, config PostgresStoreConfig) (*Postgre
 	}
 
 	store := &PostgresStore{
-		db:           config.DB,
-		resourceType: config.ResourceType,
-		scheme:       config.Scheme,
-		gvk:          config.GVK,
-		broadcaster:  config.Broadcaster,
-		tableName:    tableName,
+		db:               config.DB,
+		resourceType:     config.ResourceType,
+		scheme:           config.Scheme,
+		gvk:              config.GVK,
+		broadcaster:      config.Broadcaster,
+		tableName:        tableName,
+		contextFilterKey: config.ContextFilterKey,
 	}
 
 	// Create table schema
@@ -95,15 +98,18 @@ func (s *PostgresStore) createSchema(ctx context.Context) error {
 			resource_version BIGINT NOT NULL,
 			labels JSONB,
 			data JSONB NOT NULL,
+			context_filter VARCHAR(253) NOT NULL DEFAULT '',
 			created_at TIMESTAMP NOT NULL DEFAULT NOW(),
 			updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-			UNIQUE(namespace, name)
+			UNIQUE(namespace, name, context_filter)
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_%s_namespace ON %s(namespace);
 		CREATE INDEX IF NOT EXISTS idx_%s_resource_version ON %s(resource_version);
 		CREATE INDEX IF NOT EXISTS idx_%s_labels ON %s USING GIN(labels);
+		CREATE INDEX IF NOT EXISTS idx_%s_context_filter ON %s(context_filter);
 	`, s.tableName,
+		s.tableName, s.tableName,
 		s.tableName, s.tableName,
 		s.tableName, s.tableName,
 		s.tableName, s.tableName)
@@ -132,11 +138,31 @@ func (s *PostgresStore) nextResourceVersion() int64 {
 	return s.resourceVersionCounter
 }
 
+// contextFilterValue extracts the filter value from the context.
+// Returns empty string if no filter key is configured.
+func (s *PostgresStore) contextFilterValue(ctx context.Context) (string, error) {
+	if s.contextFilterKey == nil {
+		return "", nil
+	}
+	v := ctx.Value(s.contextFilterKey)
+	if v == nil {
+		return "", fmt.Errorf("context filter key %v not found in context", s.contextFilterKey)
+	}
+	str, ok := v.(string)
+	if !ok {
+		return "", fmt.Errorf("context filter value must be a string, got %T", v)
+	}
+	return str, nil
+}
+
 // Create implements ResourceStore.
 // If obj.GetName() is empty and obj.GetGenerateName() is set,
 // a unique name is generated with retry on duplicate key violations.
-func (s *PostgresStore) Create(obj client.Object) error {
-	ctx := context.Background()
+func (s *PostgresStore) Create(ctx context.Context, obj client.Object) error {
+	filterValue, err := s.contextFilterValue(ctx)
+	if err != nil {
+		return err
+	}
 
 	namespace := obj.GetNamespace()
 	name := obj.GetName()
@@ -177,14 +203,23 @@ func (s *PostgresStore) Create(obj client.Object) error {
 		}
 
 		// Insert into database
-		query := fmt.Sprintf(`
-			INSERT INTO %s (namespace, name, resource_version, labels, data)
-			VALUES ($1, $2, $3, $4, $5)
-		`, s.tableName)
-
-		_, err = s.db.ExecContext(ctx, query, namespace, name, rv, labelsJSON, data)
-		if err != nil {
-			if isDuplicateKeyError(err) {
+		var query string
+		var execErr error
+		if s.contextFilterKey != nil {
+			query = fmt.Sprintf(`
+				INSERT INTO %s (namespace, name, resource_version, labels, data, context_filter)
+				VALUES ($1, $2, $3, $4, $5, $6)
+			`, s.tableName)
+			_, execErr = s.db.ExecContext(ctx, query, namespace, name, rv, labelsJSON, data, filterValue)
+		} else {
+			query = fmt.Sprintf(`
+				INSERT INTO %s (namespace, name, resource_version, labels, data)
+				VALUES ($1, $2, $3, $4, $5)
+			`, s.tableName)
+			_, execErr = s.db.ExecContext(ctx, query, namespace, name, rv, labelsJSON, data)
+		}
+		if execErr != nil {
+			if isDuplicateKeyError(execErr) {
 				if useGenerateName && attempt < maxAttempts-1 {
 					continue
 				}
@@ -193,15 +228,16 @@ func (s *PostgresStore) Create(obj client.Object) error {
 					name,
 				)
 			}
-			return fmt.Errorf("failed to insert object: %w", err)
+			return fmt.Errorf("failed to insert object: %w", execErr)
 		}
 
 		// Broadcast event
 		if s.broadcaster != nil {
 			s.broadcaster.Broadcast(storage.ResourceEvent{
-				Type:            storage.EventAdded,
-				Object:          obj.DeepCopyObject().(client.Object),
-				ResourceVersion: strconv.FormatInt(rv, 10),
+				Type:               storage.EventAdded,
+				Object:             obj.DeepCopyObject().(client.Object),
+				ResourceVersion:    strconv.FormatInt(rv, 10),
+				ContextFilterValue: filterValue,
 			})
 		}
 
@@ -212,16 +248,30 @@ func (s *PostgresStore) Create(obj client.Object) error {
 }
 
 // Get implements ResourceStore.
-func (s *PostgresStore) Get(namespace, name string) (client.Object, error) {
-	ctx := context.Background()
+func (s *PostgresStore) Get(ctx context.Context, namespace, name string) (client.Object, error) {
+	filterValue, err := s.contextFilterValue(ctx)
+	if err != nil {
+		return nil, err
+	}
 
-	query := fmt.Sprintf(`
-		SELECT data FROM %s
-		WHERE namespace = $1 AND name = $2
-	`, s.tableName)
+	var query string
+	var row *sql.Row
+	if s.contextFilterKey != nil {
+		query = fmt.Sprintf(`
+			SELECT data FROM %s
+			WHERE namespace = $1 AND name = $2 AND context_filter = $3
+		`, s.tableName)
+		row = s.db.QueryRowContext(ctx, query, namespace, name, filterValue)
+	} else {
+		query = fmt.Sprintf(`
+			SELECT data FROM %s
+			WHERE namespace = $1 AND name = $2
+		`, s.tableName)
+		row = s.db.QueryRowContext(ctx, query, namespace, name)
+	}
 
 	var data []byte
-	err := s.db.QueryRowContext(ctx, query, namespace, name).Scan(&data)
+	err = row.Scan(&data)
 	if err == sql.ErrNoRows {
 		return nil, errors.NewNotFound(
 			schema.GroupResource{Resource: s.resourceType},
@@ -242,11 +292,14 @@ func (s *PostgresStore) Get(namespace, name string) (client.Object, error) {
 }
 
 // List implements ResourceStore.
-func (s *PostgresStore) List(opts storage.ListOptions) (client.ObjectList, error) {
-	ctx := context.Background()
+func (s *PostgresStore) List(ctx context.Context, opts storage.ListOptions) (client.ObjectList, error) {
+	filterValue, err := s.contextFilterValue(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	// Build query using QueryBuilder
-	query, args, err := s.buildListQuery(opts)
+	query, args, err := s.buildListQuery(opts, filterValue)
 	if err != nil {
 		return nil, err
 	}
@@ -332,14 +385,17 @@ func (s *PostgresStore) List(opts storage.ListOptions) (client.ObjectList, error
 }
 
 // Update implements ResourceStore.
-func (s *PostgresStore) Update(obj client.Object) error {
-	ctx := context.Background()
+func (s *PostgresStore) Update(ctx context.Context, obj client.Object) error {
+	filterValue, err := s.contextFilterValue(ctx)
+	if err != nil {
+		return err
+	}
 
 	namespace := obj.GetNamespace()
 	name := obj.GetName()
 
 	// Get current object to check existence
-	_, err := s.Get(namespace, name)
+	_, err = s.Get(ctx, namespace, name)
 	if err != nil {
 		return err
 	}
@@ -360,13 +416,23 @@ func (s *PostgresStore) Update(obj client.Object) error {
 	}
 
 	// Update in database
-	query := fmt.Sprintf(`
-		UPDATE %s
-		SET resource_version = $1, labels = $2, data = $3, updated_at = NOW()
-		WHERE namespace = $4 AND name = $5
-	`, s.tableName)
-
-	result, err := s.db.ExecContext(ctx, query, rv, labelsJSON, data, namespace, name)
+	var query string
+	var result sql.Result
+	if s.contextFilterKey != nil {
+		query = fmt.Sprintf(`
+			UPDATE %s
+			SET resource_version = $1, labels = $2, data = $3, updated_at = NOW()
+			WHERE namespace = $4 AND name = $5 AND context_filter = $6
+		`, s.tableName)
+		result, err = s.db.ExecContext(ctx, query, rv, labelsJSON, data, namespace, name, filterValue)
+	} else {
+		query = fmt.Sprintf(`
+			UPDATE %s
+			SET resource_version = $1, labels = $2, data = $3, updated_at = NOW()
+			WHERE namespace = $4 AND name = $5
+		`, s.tableName)
+		result, err = s.db.ExecContext(ctx, query, rv, labelsJSON, data, namespace, name)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to update object: %w", err)
 	}
@@ -382,9 +448,10 @@ func (s *PostgresStore) Update(obj client.Object) error {
 	// Broadcast event
 	if s.broadcaster != nil {
 		s.broadcaster.Broadcast(storage.ResourceEvent{
-			Type:            storage.EventModified,
-			Object:          obj.DeepCopyObject().(client.Object),
-			ResourceVersion: strconv.FormatInt(rv, 10),
+			Type:               storage.EventModified,
+			Object:             obj.DeepCopyObject().(client.Object),
+			ResourceVersion:    strconv.FormatInt(rv, 10),
+			ContextFilterValue: filterValue,
 		})
 	}
 
@@ -392,22 +459,34 @@ func (s *PostgresStore) Update(obj client.Object) error {
 }
 
 // Delete implements ResourceStore.
-func (s *PostgresStore) Delete(namespace, name string) error {
-	ctx := context.Background()
+func (s *PostgresStore) Delete(ctx context.Context, namespace, name string) error {
+	filterValue, err := s.contextFilterValue(ctx)
+	if err != nil {
+		return err
+	}
 
 	// Get object before deleting for the event
-	obj, err := s.Get(namespace, name)
+	obj, err := s.Get(ctx, namespace, name)
 	if err != nil {
 		return err
 	}
 
 	// Delete from database
-	query := fmt.Sprintf(`
-		DELETE FROM %s
-		WHERE namespace = $1 AND name = $2
-	`, s.tableName)
-
-	result, err := s.db.ExecContext(ctx, query, namespace, name)
+	var query string
+	var result sql.Result
+	if s.contextFilterKey != nil {
+		query = fmt.Sprintf(`
+			DELETE FROM %s
+			WHERE namespace = $1 AND name = $2 AND context_filter = $3
+		`, s.tableName)
+		result, err = s.db.ExecContext(ctx, query, namespace, name, filterValue)
+	} else {
+		query = fmt.Sprintf(`
+			DELETE FROM %s
+			WHERE namespace = $1 AND name = $2
+		`, s.tableName)
+		result, err = s.db.ExecContext(ctx, query, namespace, name)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to delete object: %w", err)
 	}
@@ -424,9 +503,10 @@ func (s *PostgresStore) Delete(namespace, name string) error {
 	if s.broadcaster != nil {
 		rv := s.nextResourceVersion()
 		s.broadcaster.Broadcast(storage.ResourceEvent{
-			Type:            storage.EventDeleted,
-			Object:          obj,
-			ResourceVersion: strconv.FormatInt(rv, 10),
+			Type:               storage.EventDeleted,
+			Object:             obj,
+			ResourceVersion:    strconv.FormatInt(rv, 10),
+			ContextFilterValue: filterValue,
 		})
 	}
 
@@ -434,7 +514,12 @@ func (s *PostgresStore) Delete(namespace, name string) error {
 }
 
 // Watch implements ResourceStore.
-func (s *PostgresStore) Watch(opts storage.ListOptions, resourceVersion string) (<-chan storage.ResourceEvent, func(), error) {
+func (s *PostgresStore) Watch(ctx context.Context, opts storage.ListOptions, resourceVersion string) (<-chan storage.ResourceEvent, func(), error) {
+	filterValue, err := s.contextFilterValue(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	if s.broadcaster == nil {
 		return nil, nil, fmt.Errorf("broadcaster not configured")
 	}
@@ -472,6 +557,13 @@ func (s *PostgresStore) Watch(opts storage.ListOptions, resourceVersion string) 
 			case event, ok := <-eventCh:
 				if !ok {
 					return
+				}
+
+				// Filter by context filter value
+				if s.contextFilterKey != nil {
+					if event.ContextFilterValue != filterValue {
+						continue
+					}
 				}
 
 				// Apply filters
@@ -547,7 +639,7 @@ func findSubstring(s, substr string) bool {
 var _ storage.ResourceStore = (*PostgresStore)(nil)
 
 // buildListQuery constructs the SQL query for List operations using QueryBuilder.
-func (s *PostgresStore) buildListQuery(opts storage.ListOptions) (string, []interface{}, error) {
+func (s *PostgresStore) buildListQuery(opts storage.ListOptions, filterValue string) (string, []interface{}, error) {
 	// Parse label selector if needed
 	var labelSelector labels.Selector
 	var err error
@@ -573,6 +665,12 @@ func (s *PostgresStore) buildListQuery(opts storage.ListOptions) (string, []inte
 	qb.WhereLabelSelector(labelSelector)
 	qb.WhereShardSelector(opts.ShardSelector)
 	qb.WhereContinueToken(continueToken)
+
+	// Add context filter if configured
+	if s.contextFilterKey != nil {
+		qb.Where(fmt.Sprintf("context_filter = $%d", qb.ArgNum()), filterValue)
+	}
+
 	qb.OrderBy("namespace", "name")
 
 	// Add limit with +1 for hasMore detection

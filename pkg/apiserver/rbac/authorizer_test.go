@@ -453,7 +453,7 @@ func TestAuthorize(t *testing.T) {
 				},
 			},
 		}
-		if err := clusterRoleStore.Create(cr); err != nil {
+		if err := clusterRoleStore.Create(ctx, cr); err != nil {
 			t.Fatalf("failed to create ClusterRole: %v", err)
 		}
 
@@ -475,7 +475,7 @@ func TestAuthorize(t *testing.T) {
 				Name:     "admin-role",
 			},
 		}
-		if err := clusterRoleBindingStore.Create(crb); err != nil {
+		if err := clusterRoleBindingStore.Create(ctx, crb); err != nil {
 			t.Fatalf("failed to create ClusterRoleBinding: %v", err)
 		}
 
@@ -519,7 +519,7 @@ func TestAuthorize(t *testing.T) {
 				},
 			},
 		}
-		if err := roleStore.Create(role); err != nil {
+		if err := roleStore.Create(ctx, role); err != nil {
 			t.Fatalf("failed to create Role: %v", err)
 		}
 
@@ -542,7 +542,7 @@ func TestAuthorize(t *testing.T) {
 				Name:     "deployer",
 			},
 		}
-		if err := roleBindingStore.Create(rb); err != nil {
+		if err := roleBindingStore.Create(ctx, rb); err != nil {
 			t.Fatalf("failed to create RoleBinding: %v", err)
 		}
 
@@ -609,7 +609,7 @@ func TestAuthorize(t *testing.T) {
 				},
 			},
 		}
-		if err := clusterRoleStore.Create(cr); err != nil {
+		if err := clusterRoleStore.Create(ctx, cr); err != nil {
 			t.Fatalf("failed to create ClusterRole: %v", err)
 		}
 
@@ -630,7 +630,7 @@ func TestAuthorize(t *testing.T) {
 				Name:     "superadmin",
 			},
 		}
-		if err := clusterRoleBindingStore.Create(crb); err != nil {
+		if err := clusterRoleBindingStore.Create(ctx, crb); err != nil {
 			t.Fatalf("failed to create ClusterRoleBinding: %v", err)
 		}
 
@@ -677,7 +677,7 @@ func TestAuthorize(t *testing.T) {
 				},
 			},
 		}
-		if err := roleStore.Create(role); err != nil {
+		if err := roleStore.Create(ctx, role); err != nil {
 			t.Fatalf("failed to create Role: %v", err)
 		}
 
@@ -699,7 +699,7 @@ func TestAuthorize(t *testing.T) {
 				Name:     "viewer",
 			},
 		}
-		if err := roleBindingStore.Create(rb); err != nil {
+		if err := roleBindingStore.Create(ctx, rb); err != nil {
 			t.Fatalf("failed to create RoleBinding: %v", err)
 		}
 

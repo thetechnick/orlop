@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"context"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -32,10 +34,10 @@ type ResourceStore interface {
 	// Create creates a new resource.
 	// If obj.GetName() is empty and obj.GetGenerateName() is set,
 	// the store must generate a unique name and set it on obj before persisting.
-	Create(obj client.Object) error
+	Create(ctx context.Context, obj client.Object) error
 
 	// Get retrieves a resource by namespace and name.
-	Get(namespace, name string) (client.Object, error)
+	Get(ctx context.Context, namespace, name string) (client.Object, error)
 
 	// List lists all resources matching the given options.
 	// Returns a properly typed list object with metadata.
@@ -43,13 +45,13 @@ type ResourceStore interface {
 	// - Namespace filtering
 	// - Label selector filtering
 	// - Shard-based filtering (if ShardSelector provided)
-	List(opts ListOptions) (client.ObjectList, error)
+	List(ctx context.Context, opts ListOptions) (client.ObjectList, error)
 
 	// Update updates an existing resource.
-	Update(obj client.Object) error
+	Update(ctx context.Context, obj client.Object) error
 
 	// Delete deletes a resource by namespace and name.
-	Delete(namespace, name string) error
+	Delete(ctx context.Context, namespace, name string) error
 
 	// Watch starts watching for changes starting from the given resource version.
 	// Returns a channel that receives watch events and a stop function to end the watch.
@@ -57,5 +59,5 @@ type ResourceStore interface {
 	// - Namespace (if specified in opts)
 	// - Label selector (if specified in opts)
 	// - Shard (if ShardSelector provided in opts)
-	Watch(opts ListOptions, resourceVersion string) (<-chan ResourceEvent, func(), error)
+	Watch(ctx context.Context, opts ListOptions, resourceVersion string) (<-chan ResourceEvent, func(), error)
 }

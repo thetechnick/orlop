@@ -147,12 +147,12 @@ func TestPostgresStore_Create(t *testing.T) {
 
 		obj := newTestObject(withName("test-obj"), withNamespace("default"))
 
-		err := store.Create(obj)
+		err := store.Create(context.Background(), obj)
 		if err != nil {
 			t.Fatalf("Create() failed: %v", err)
 		}
 
-		retrieved, err := store.Get("default", "test-obj")
+		retrieved, err := store.Get(context.Background(), "default", "test-obj")
 		if err != nil {
 			t.Fatalf("Get() failed: %v", err)
 		}
@@ -171,8 +171,8 @@ func TestPostgresStore_Create(t *testing.T) {
 
 		obj := newTestObject(withName("duplicate"), withNamespace("default"))
 
-		store.Create(obj)
-		err := store.Create(obj)
+		store.Create(context.Background(), obj)
+		err := store.Create(context.Background(), obj)
 
 		if err == nil {
 			t.Error("Expected error for duplicate object, got nil")
@@ -186,18 +186,18 @@ func TestPostgresStore_Create(t *testing.T) {
 		obj1 := newTestObject(withName("obj"), withNamespace("ns1"))
 		obj2 := newTestObject(withName("obj"), withNamespace("ns2"))
 
-		if err := store.Create(obj1); err != nil {
+		if err := store.Create(context.Background(), obj1); err != nil {
 			t.Errorf("Create in ns1 failed: %v", err)
 		}
-		if err := store.Create(obj2); err != nil {
+		if err := store.Create(context.Background(), obj2); err != nil {
 			t.Errorf("Create in ns2 failed: %v", err)
 		}
 
 		// Both should exist
-		if _, err := store.Get("ns1", "obj"); err != nil {
+		if _, err := store.Get(context.Background(), "ns1", "obj"); err != nil {
 			t.Error("Object in ns1 not found")
 		}
-		if _, err := store.Get("ns2", "obj"); err != nil {
+		if _, err := store.Get(context.Background(), "ns2", "obj"); err != nil {
 			t.Error("Object in ns2 not found")
 		}
 	})
@@ -208,7 +208,7 @@ func TestPostgresStore_Create(t *testing.T) {
 
 		obj := newTestObject(withGenerateName("gen-"), withNamespace("default"))
 
-		err := store.Create(obj)
+		err := store.Create(context.Background(), obj)
 		if err != nil {
 			t.Fatalf("Create() with generateName failed: %v", err)
 		}
@@ -221,7 +221,7 @@ func TestPostgresStore_Create(t *testing.T) {
 			t.Errorf("Generated name too short: %q", name)
 		}
 
-		retrieved, err := store.Get("default", name)
+		retrieved, err := store.Get(context.Background(), "default", name)
 		if err != nil {
 			t.Fatalf("Get() by generated name failed: %v", err)
 		}
@@ -238,7 +238,7 @@ func TestPostgresStore_Create(t *testing.T) {
 
 		for range 20 {
 			obj := newTestObject(withGenerateName("multi-"), withNamespace("default"))
-			if err := store.Create(obj); err != nil {
+			if err := store.Create(context.Background(), obj); err != nil {
 				t.Fatalf("Create() failed: %v", err)
 			}
 			name := obj.GetName()
@@ -248,7 +248,7 @@ func TestPostgresStore_Create(t *testing.T) {
 			seen[name] = true
 		}
 
-		listObj, _ := store.List(storage.ListOptions{Namespace: "default"})
+		listObj, _ := store.List(context.Background(), storage.ListOptions{Namespace: "default"})
 		list := listObj.(*unstructured.UnstructuredList)
 		if len(list.Items) != 20 {
 			t.Errorf("Expected 20 objects, got %d", len(list.Items))
@@ -261,9 +261,9 @@ func TestPostgresStore_Create(t *testing.T) {
 
 		obj := newTestObject(withName("test"), withNamespace("default"))
 
-		store.Create(obj)
+		store.Create(context.Background(), obj)
 
-		retrieved, _ := store.Get("default", "test")
+		retrieved, _ := store.Get(context.Background(), "default", "test")
 		creationTime := retrieved.GetCreationTimestamp()
 		if creationTime.IsZero() {
 			t.Error("Creation timestamp not set")
@@ -277,9 +277,9 @@ func TestPostgresStore_Get(t *testing.T) {
 		defer cleanup()
 
 		obj := newTestObject(withName("test"), withNamespace("default"))
-		store.Create(obj)
+		store.Create(context.Background(), obj)
 
-		retrieved, err := store.Get("default", "test")
+		retrieved, err := store.Get(context.Background(), "default", "test")
 		if err != nil {
 			t.Fatalf("Get() failed: %v", err)
 		}
@@ -292,7 +292,7 @@ func TestPostgresStore_Get(t *testing.T) {
 		store, cleanup := setupTestStore(t)
 		defer cleanup()
 
-		_, err := store.Get("default", "missing")
+		_, err := store.Get(context.Background(), "default", "missing")
 		if err == nil {
 			t.Error("Expected error for missing object, got nil")
 		}
@@ -303,9 +303,9 @@ func TestPostgresStore_Get(t *testing.T) {
 		defer cleanup()
 
 		obj := newTestObject(withName("test"), withNamespace("default"))
-		store.Create(obj)
+		store.Create(context.Background(), obj)
 
-		_, err := store.Get("kube-system", "test")
+		_, err := store.Get(context.Background(), "kube-system", "test")
 		if err == nil {
 			t.Error("Expected error for wrong namespace, got nil")
 		}
@@ -317,11 +317,11 @@ func TestPostgresStore_List(t *testing.T) {
 		store, cleanup := setupTestStore(t)
 		defer cleanup()
 
-		store.Create(newTestObject(withName("obj1"), withNamespace("default")))
-		store.Create(newTestObject(withName("obj2"), withNamespace("default")))
-		store.Create(newTestObject(withName("obj3"), withNamespace("kube-system")))
+		store.Create(context.Background(), newTestObject(withName("obj1"), withNamespace("default")))
+		store.Create(context.Background(), newTestObject(withName("obj2"), withNamespace("default")))
+		store.Create(context.Background(), newTestObject(withName("obj3"), withNamespace("kube-system")))
 
-		listObj, err := store.List(storage.ListOptions{Namespace: "default"})
+		listObj, err := store.List(context.Background(), storage.ListOptions{Namespace: "default"})
 		if err != nil {
 			t.Fatalf("List() failed: %v", err)
 		}
@@ -336,11 +336,11 @@ func TestPostgresStore_List(t *testing.T) {
 		store, cleanup := setupTestStore(t)
 		defer cleanup()
 
-		store.Create(newTestObject(withName("obj1"), withNamespace("default")))
-		store.Create(newTestObject(withName("obj2"), withNamespace("kube-system")))
-		store.Create(newTestObject(withName("obj3"), withNamespace("kube-public")))
+		store.Create(context.Background(), newTestObject(withName("obj1"), withNamespace("default")))
+		store.Create(context.Background(), newTestObject(withName("obj2"), withNamespace("kube-system")))
+		store.Create(context.Background(), newTestObject(withName("obj3"), withNamespace("kube-public")))
 
-		listObj, err := store.List(storage.ListOptions{})
+		listObj, err := store.List(context.Background(), storage.ListOptions{})
 		if err != nil {
 			t.Fatalf("List() failed: %v", err)
 		}
@@ -355,7 +355,7 @@ func TestPostgresStore_List(t *testing.T) {
 		store, cleanup := setupTestStore(t)
 		defer cleanup()
 
-		listObj, err := store.List(storage.ListOptions{Namespace: "default"})
+		listObj, err := store.List(context.Background(), storage.ListOptions{Namespace: "default"})
 		if err != nil {
 			t.Fatalf("List() failed: %v", err)
 		}
@@ -370,10 +370,10 @@ func TestPostgresStore_List(t *testing.T) {
 		store, cleanup := setupTestStore(t)
 		defer cleanup()
 
-		store.Create(newTestObject(withName("obj1"), withNamespace("default")))
-		store.Create(newTestObject(withName("obj2"), withNamespace("default")))
+		store.Create(context.Background(), newTestObject(withName("obj1"), withNamespace("default")))
+		store.Create(context.Background(), newTestObject(withName("obj2"), withNamespace("default")))
 
-		listObj, _ := store.List(storage.ListOptions{Namespace: "default"})
+		listObj, _ := store.List(context.Background(), storage.ListOptions{Namespace: "default"})
 		list := listObj.(*unstructured.UnstructuredList)
 
 		if list.GetResourceVersion() == "" {
@@ -392,19 +392,19 @@ func TestPostgresStore_Update(t *testing.T) {
 			withNamespace("default"),
 			withSpec(map[string]interface{}{"field": "original"}),
 		)
-		store.Create(obj)
+		store.Create(context.Background(), obj)
 
-		retrieved, _ := store.Get("default", "test")
+		retrieved, _ := store.Get(context.Background(), "default", "test")
 		updated := retrieved.DeepCopyObject().(client.Object)
 		u := updated.(*unstructured.Unstructured)
 		u.Object["spec"] = map[string]interface{}{"field": "updated"}
 
-		err := store.Update(updated)
+		err := store.Update(context.Background(), updated)
 		if err != nil {
 			t.Fatalf("Update() failed: %v", err)
 		}
 
-		final, _ := store.Get("default", "test")
+		final, _ := store.Get(context.Background(), "default", "test")
 		finalU := final.(*unstructured.Unstructured)
 		spec := finalU.Object["spec"].(map[string]interface{})
 		if spec["field"] != "updated" {
@@ -417,14 +417,14 @@ func TestPostgresStore_Update(t *testing.T) {
 		defer cleanup()
 
 		obj := newTestObject(withName("test"), withNamespace("default"))
-		store.Create(obj)
+		store.Create(context.Background(), obj)
 
-		retrieved, _ := store.Get("default", "test")
+		retrieved, _ := store.Get(context.Background(), "default", "test")
 		initialRV := retrieved.GetResourceVersion()
 
-		store.Update(retrieved)
+		store.Update(context.Background(), retrieved)
 
-		updated, _ := store.Get("default", "test")
+		updated, _ := store.Get(context.Background(), "default", "test")
 		if updated.GetResourceVersion() == initialRV {
 			t.Error("ResourceVersion not incremented after update")
 		}
@@ -436,7 +436,7 @@ func TestPostgresStore_Update(t *testing.T) {
 
 		obj := newTestObject(withName("missing"), withNamespace("default"))
 
-		err := store.Update(obj)
+		err := store.Update(context.Background(), obj)
 		if err == nil {
 			t.Error("Expected error for missing object, got nil")
 		}
@@ -449,14 +449,14 @@ func TestPostgresStore_Delete(t *testing.T) {
 		defer cleanup()
 
 		obj := newTestObject(withName("test"), withNamespace("default"))
-		store.Create(obj)
+		store.Create(context.Background(), obj)
 
-		err := store.Delete("default", "test")
+		err := store.Delete(context.Background(), "default", "test")
 		if err != nil {
 			t.Fatalf("Delete() failed: %v", err)
 		}
 
-		_, err = store.Get("default", "test")
+		_, err = store.Get(context.Background(), "default", "test")
 		if err == nil {
 			t.Error("Object still exists after delete")
 		}
@@ -466,7 +466,7 @@ func TestPostgresStore_Delete(t *testing.T) {
 		store, cleanup := setupTestStore(t)
 		defer cleanup()
 
-		err := store.Delete("default", "missing")
+		err := store.Delete(context.Background(), "default", "missing")
 		if err == nil {
 			t.Error("Expected error for missing object, got nil")
 		}
@@ -479,26 +479,26 @@ func TestPostgresStore_ResourceVersionIncrement(t *testing.T) {
 
 	// Create increments version
 	obj1 := newTestObject(withName("obj1"), withNamespace("default"))
-	store.Create(obj1)
+	store.Create(context.Background(), obj1)
 
-	retrieved1, _ := store.Get("default", "obj1")
+	retrieved1, _ := store.Get(context.Background(), "default", "obj1")
 	if retrieved1.GetResourceVersion() != "1" {
 		t.Errorf("After first create, rv = %s, want 1", retrieved1.GetResourceVersion())
 	}
 
 	// Second create increments further
 	obj2 := newTestObject(withName("obj2"), withNamespace("default"))
-	store.Create(obj2)
+	store.Create(context.Background(), obj2)
 
-	retrieved2, _ := store.Get("default", "obj2")
+	retrieved2, _ := store.Get(context.Background(), "default", "obj2")
 	if retrieved2.GetResourceVersion() != "2" {
 		t.Errorf("After second create, rv = %s, want 2", retrieved2.GetResourceVersion())
 	}
 
 	// Update increments
-	store.Update(retrieved1)
+	store.Update(context.Background(), retrieved1)
 
-	retrievedUpdated, _ := store.Get("default", "obj1")
+	retrievedUpdated, _ := store.Get(context.Background(), "default", "obj1")
 	if retrievedUpdated.GetResourceVersion() != "3" {
 		t.Errorf("After update, rv = %s, want 3", retrievedUpdated.GetResourceVersion())
 	}
@@ -525,7 +525,7 @@ func TestPostgresStore_Persistence(t *testing.T) {
 		})
 
 		obj := newTestObject(withName("persistent"), withNamespace("default"))
-		store1.Create(obj)
+		store1.Create(context.Background(), obj)
 
 		// Create second store (simulates restart)
 		store2, _ := NewPostgresStore(context.Background(), PostgresStoreConfig{
@@ -537,7 +537,7 @@ func TestPostgresStore_Persistence(t *testing.T) {
 		})
 
 		// Object should still exist
-		retrieved, err := store2.Get("default", "persistent")
+		retrieved, err := store2.Get(context.Background(), "default", "persistent")
 		if err != nil {
 			t.Fatalf("Object not persisted: %v", err)
 		}
@@ -560,7 +560,7 @@ func TestPostgresStore_Concurrency(t *testing.T) {
 					withName(ns+"-obj"),
 					withNamespace(ns),
 				)
-				store.Create(obj)
+				store.Create(context.Background(), obj)
 			}
 			done <- true
 		}
@@ -574,7 +574,7 @@ func TestPostgresStore_Concurrency(t *testing.T) {
 		<-done
 
 		// Verify all objects were created
-		listObj, _ := store.List(storage.ListOptions{})
+		listObj, _ := store.List(context.Background(), storage.ListOptions{})
 		list := listObj.(*unstructured.UnstructuredList)
 
 		if len(list.Items) != 3 {

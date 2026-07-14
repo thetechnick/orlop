@@ -59,6 +59,7 @@ func TestGetUserInfo(t *testing.T) {
 func setupMiddleware(t *testing.T) (*Middleware, string) {
 	t.Helper()
 
+	ctx := context.Background()
 	scheme := newTestScheme()
 
 	saStore := memory.NewMemoryStore(
@@ -90,7 +91,7 @@ func setupMiddleware(t *testing.T) (*Middleware, string) {
 	sa.SetNamespace("test-ns")
 	sa.SetUID(types.UID("sa-uid-001"))
 
-	if err := saStore.Create(sa); err != nil {
+	if err := saStore.Create(ctx, sa); err != nil {
 		t.Fatalf("failed to create ServiceAccount: %v", err)
 	}
 
@@ -105,7 +106,7 @@ func setupMiddleware(t *testing.T) (*Middleware, string) {
 
 	token := string(secret.Data[TokenKey])
 
-	if err := secretStore.Create(secret); err != nil {
+	if err := secretStore.Create(ctx, secret); err != nil {
 		t.Fatalf("failed to create Secret: %v", err)
 	}
 

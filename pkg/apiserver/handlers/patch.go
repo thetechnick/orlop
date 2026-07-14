@@ -34,7 +34,7 @@ func (h *ResourceHandler) Patch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get existing object
-	existing, err := h.store.Get(namespace, name)
+	existing, err := h.store.Get(r.Context(), namespace, name)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -154,7 +154,7 @@ func (h *ResourceHandler) processPatchedObject(w http.ResponseWriter, r *http.Re
 	clientObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Update object
-	if err := h.store.Update(clientObj); err != nil {
+	if err := h.store.Update(r.Context(), clientObj); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update object: %v", err))
 		return
 	}

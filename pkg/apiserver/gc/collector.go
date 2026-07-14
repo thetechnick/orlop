@@ -75,9 +75,11 @@ func (c *Collector) collectGarbage() {
 	deleted := 0
 	checked := 0
 
+	ctx := context.Background()
+
 	for resourceType, store := range c.stores {
 		// List all objects in this store
-		list, err := store.List(storage.ListOptions{})
+		list, err := store.List(ctx, storage.ListOptions{})
 		if err != nil {
 			c.logger.Error(err, "Failed to list objects for GC", "resourceType", resourceType)
 			continue
@@ -133,7 +135,7 @@ func (c *Collector) collectGarbage() {
 
 			if shouldDelete {
 				// Delete the object
-				if err := store.Delete(accessor.GetNamespace(), accessor.GetName()); err != nil {
+				if err := store.Delete(ctx, accessor.GetNamespace(), accessor.GetName()); err != nil {
 					if !errors.IsNotFound(err) {
 						c.logger.Error(err, "Failed to delete orphaned object",
 							"object", accessor.GetName(),
@@ -158,11 +160,12 @@ func (c *Collector) collectGarbage() {
 
 // ownerExists checks if an owner object still exists in storage.
 func (c *Collector) ownerExists(ownerRef metav1.OwnerReference, namespace string) (bool, error) {
+	ctx := context.Background()
 	// Find the store for the owner's resource type
 	// This is a simplified check - in a real implementation, we'd need to map
 	// Kind to resource type more accurately
 	for _, store := range c.stores {
-		_, err := store.Get(namespace, ownerRef.Name)
+		_, err := store.Get(ctx, namespace, ownerRef.Name)
 		if err == nil {
 			// Owner exists
 			return true, nil

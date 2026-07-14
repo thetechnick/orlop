@@ -298,6 +298,7 @@ func TestHandler(t *testing.T) {
 	}
 
 	t.Run("authorized request passes through", func(t *testing.T) {
+		ctx := context.Background()
 		clusterRoleStore := memory.NewMemoryStore("clusterroles", scheme, clusterRoleGVK)
 		clusterRoleBindingStore := memory.NewMemoryStore("clusterrolebindings", scheme, clusterRoleBindingGVK)
 		roleStore := memory.NewMemoryStore("roles", scheme, roleGVK)
@@ -320,7 +321,7 @@ func TestHandler(t *testing.T) {
 				},
 			},
 		}
-		if err := clusterRoleStore.Create(cr); err != nil {
+		if err := clusterRoleStore.Create(ctx, cr); err != nil {
 			t.Fatalf("failed to create ClusterRole: %v", err)
 		}
 
@@ -341,7 +342,7 @@ func TestHandler(t *testing.T) {
 				Name:     "admin",
 			},
 		}
-		if err := clusterRoleBindingStore.Create(crb); err != nil {
+		if err := clusterRoleBindingStore.Create(ctx, crb); err != nil {
 			t.Fatalf("failed to create ClusterRoleBinding: %v", err)
 		}
 

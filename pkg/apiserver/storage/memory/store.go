@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -31,6 +32,15 @@ func WithBroadcaster(broadcaster storage.EventBroadcaster) MemoryStoreOption {
 func WithBroadcasterFactory(factory storage.EventBroadcasterFactory) MemoryStoreOption {
 	return func(s *MemoryStore) {
 		s.broadcaster = factory()
+	}
+}
+
+// WithContextFilter configures the store to extract a value from the context
+// using the given key and use it as an additional filter dimension.
+// All operations will be scoped to the filter value found in the context.
+func WithContextFilter(key any) MemoryStoreOption {
+	return func(s *MemoryStore) {
+		s.contextFilterKey = key
 	}
 }
 
@@ -70,17 +80,66 @@ func NewMemoryStore(resourceType string, scheme *runtime.Scheme, gvk schema.Grou
 type MemoryStore struct {
 	mu                     sync.RWMutex
 	resourceType           string
-	objects                map[string]client.Object // namespace/name -> object
+	objects                map[string]client.Object // key -> object
 	scheme                 *runtime.Scheme          // For creating list objects
-	gvk                    schema.GroupVersionKind  // For list metadata
-	resourceVersionCounter atomic.Int64             // Per-resource version counter
-	broadcaster            storage.EventBroadcaster         // Pluggable event broadcaster
+	gvk                    schema.GroupVersionKind   // For list metadata
+	resourceVersionCounter atomic.Int64              // Per-resource version counter
+	broadcaster            storage.EventBroadcaster  // Pluggable event broadcaster
+	contextFilterKey       any                       // Optional context key for filtering
+}
+
+// contextFilterValue extracts the filter value from the context.
+// Returns empty string if no filter key is configured.
+func (s *MemoryStore) contextFilterValue(ctx context.Context) (string, error) {
+	if s.contextFilterKey == nil {
+		return "", nil
+	}
+	v := ctx.Value(s.contextFilterKey)
+	if v == nil {
+		return "", fmt.Errorf("context filter key %v not found in context", s.contextFilterKey)
+	}
+	str, ok := v.(string)
+	if !ok {
+		return "", fmt.Errorf("context filter value must be a string, got %T", v)
+	}
+	return str, nil
+}
+
+// makeStorageKey creates a storage key incorporating the optional filter value.
+func (s *MemoryStore) makeStorageKey(filterValue, namespace, name string) string {
+	base := s.makeKey(namespace, name)
+	if filterValue == "" {
+		return base
+	}
+	return filterValue + "\x00" + base
+}
+
+// storageKeyMatchesFilter checks if a storage key belongs to the given filter value.
+func (s *MemoryStore) storageKeyMatchesFilter(key, filterValue string) bool {
+	if filterValue == "" {
+		return !strings.Contains(key, "\x00")
+	}
+	return strings.HasPrefix(key, filterValue+"\x00")
+}
+
+// stripFilterPrefix removes the filter prefix from a storage key to get the base key.
+func (s *MemoryStore) stripFilterPrefix(key string) string {
+	idx := strings.Index(key, "\x00")
+	if idx < 0 {
+		return key
+	}
+	return key[idx+1:]
 }
 
 // Create creates a new resource.
 // If obj.GetName() is empty and obj.GetGenerateName() is set,
 // a unique name is generated atomically under the lock.
-func (s *MemoryStore) Create(obj client.Object) error {
+func (s *MemoryStore) Create(ctx context.Context, obj client.Object) error {
+	filterValue, err := s.contextFilterValue(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -90,7 +149,7 @@ func (s *MemoryStore) Create(obj client.Object) error {
 	if name == "" && obj.GetGenerateName() != "" {
 		for range 5 {
 			candidate := storage.GenerateName(obj.GetGenerateName())
-			if _, exists := s.objects[s.makeKey(namespace, candidate)]; !exists {
+			if _, exists := s.objects[s.makeStorageKey(filterValue, namespace, candidate)]; !exists {
 				name = candidate
 				obj.SetName(name)
 				break
@@ -101,7 +160,7 @@ func (s *MemoryStore) Create(obj client.Object) error {
 		}
 	}
 
-	key := s.makeKey(namespace, name)
+	key := s.makeStorageKey(filterValue, namespace, name)
 
 	if _, exists := s.objects[key]; exists {
 		return errors.NewAlreadyExists(schema.GroupResource{Resource: s.resourceType}, name)
@@ -116,22 +175,27 @@ func (s *MemoryStore) Create(obj client.Object) error {
 	s.objects[key] = obj.DeepCopyObject().(client.Object)
 
 	// Broadcast watch event
-	watcher := s.broadcaster
-	watcher.Broadcast(storage.ResourceEvent{
-		Type:            storage.EventAdded,
-		Object:          obj.DeepCopyObject().(client.Object),
-		ResourceVersion: fmt.Sprintf("%d", newVersion),
+	s.broadcaster.Broadcast(storage.ResourceEvent{
+		Type:               storage.EventAdded,
+		Object:             obj.DeepCopyObject().(client.Object),
+		ResourceVersion:    fmt.Sprintf("%d", newVersion),
+		ContextFilterValue: filterValue,
 	})
 
 	return nil
 }
 
 // Get retrieves a resource.
-func (s *MemoryStore) Get(namespace, name string) (client.Object, error) {
+func (s *MemoryStore) Get(ctx context.Context, namespace, name string) (client.Object, error) {
+	filterValue, err := s.contextFilterValue(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	key := s.makeKey(namespace, name)
+	key := s.makeStorageKey(filterValue, namespace, name)
 
 	obj, exists := s.objects[key]
 	if !exists {
@@ -142,7 +206,12 @@ func (s *MemoryStore) Get(namespace, name string) (client.Object, error) {
 }
 
 // List lists all resources matching the given options and returns a properly typed list object.
-func (s *MemoryStore) List(opts storage.ListOptions) (client.ObjectList, error) {
+func (s *MemoryStore) List(ctx context.Context, opts storage.ListOptions) (client.ObjectList, error) {
+	filterValue, err := s.contextFilterValue(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -179,8 +248,14 @@ func (s *MemoryStore) List(opts storage.ListOptions) (client.ObjectList, error) 
 	// Collect all matching keys first, then sort for stable pagination
 	var keys []string
 	for key := range s.objects {
+		// Filter by context filter
+		if !s.storageKeyMatchesFilter(key, filterValue) {
+			continue
+		}
+		// Use the base key (without filter prefix) for namespace matching
+		baseKey := s.stripFilterPrefix(key)
 		// Filter by namespace
-		if opts.Namespace != "" && !s.matchesNamespace(key, opts.Namespace) {
+		if opts.Namespace != "" && !s.matchesNamespace(baseKey, opts.Namespace) {
 			continue
 		}
 		keys = append(keys, key)
@@ -200,8 +275,9 @@ func (s *MemoryStore) List(opts storage.ListOptions) (client.ObjectList, error) 
 	for _, key := range keys {
 		obj := s.objects[key]
 
-		// Parse namespace and name from key for continue token comparison
-		namespace, name := s.parseKey(key)
+		// Parse namespace and name from base key for continue token comparison
+		baseKey := s.stripFilterPrefix(key)
+		namespace, name := s.parseKey(baseKey)
 
 		// Skip items until we pass the continue token position
 		if !storage.ShouldIncludeObject(namespace, name, continueToken) {
@@ -274,13 +350,18 @@ func (s *MemoryStore) currentResourceVersion() string {
 }
 
 // Update updates an existing resource.
-func (s *MemoryStore) Update(obj client.Object) error {
+func (s *MemoryStore) Update(ctx context.Context, obj client.Object) error {
+	filterValue, err := s.contextFilterValue(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	namespace := obj.GetNamespace()
 	name := obj.GetName()
-	key := s.makeKey(namespace, name)
+	key := s.makeStorageKey(filterValue, namespace, name)
 
 	existing, exists := s.objects[key]
 	if !exists {
@@ -315,22 +396,27 @@ func (s *MemoryStore) Update(obj client.Object) error {
 	s.objects[key] = obj.DeepCopyObject().(client.Object)
 
 	// Broadcast watch event
-	watcher := s.broadcaster
-	watcher.Broadcast(storage.ResourceEvent{
-		Type:            storage.EventModified,
-		Object:          obj.DeepCopyObject().(client.Object),
-		ResourceVersion: fmt.Sprintf("%d", newVersion),
+	s.broadcaster.Broadcast(storage.ResourceEvent{
+		Type:               storage.EventModified,
+		Object:             obj.DeepCopyObject().(client.Object),
+		ResourceVersion:    fmt.Sprintf("%d", newVersion),
+		ContextFilterValue: filterValue,
 	})
 
 	return nil
 }
 
 // Delete deletes a resource.
-func (s *MemoryStore) Delete(namespace, name string) error {
+func (s *MemoryStore) Delete(ctx context.Context, namespace, name string) error {
+	filterValue, err := s.contextFilterValue(ctx)
+	if err != nil {
+		return err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := s.makeKey(namespace, name)
+	key := s.makeStorageKey(filterValue, namespace, name)
 
 	obj, exists := s.objects[key]
 	if !exists {
@@ -340,11 +426,11 @@ func (s *MemoryStore) Delete(namespace, name string) error {
 	delete(s.objects, key)
 
 	// Broadcast watch event (use current RV since delete doesn't change it)
-	watcher := s.broadcaster
-	watcher.Broadcast(storage.ResourceEvent{
-		Type:            storage.EventDeleted,
-		Object:          obj.DeepCopyObject().(client.Object),
-		ResourceVersion: s.currentResourceVersion(),
+	s.broadcaster.Broadcast(storage.ResourceEvent{
+		Type:               storage.EventDeleted,
+		Object:             obj.DeepCopyObject().(client.Object),
+		ResourceVersion:    s.currentResourceVersion(),
+		ContextFilterValue: filterValue,
 	})
 
 	return nil
@@ -394,13 +480,17 @@ func (s *MemoryStore) setResourceVersion(obj runtime.Object, version int64) erro
 }
 
 // Watch starts watching for changes starting from the given resource version.
-func (s *MemoryStore) Watch(opts storage.ListOptions, resourceVersion string) (<-chan storage.ResourceEvent, func(), error) {
+func (s *MemoryStore) Watch(ctx context.Context, opts storage.ListOptions, resourceVersion string) (<-chan storage.ResourceEvent, func(), error) {
+	filterValue, err := s.contextFilterValue(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	watcher := s.broadcaster
 
 	// Parse label selector if specified
 	var labelSelector labels.Selector
 	if opts.LabelSelector != "" {
-		var err error
 		labelSelector, err = labels.Parse(opts.LabelSelector)
 		if err != nil {
 			return nil, nil, err
@@ -429,6 +519,13 @@ func (s *MemoryStore) Watch(opts storage.ListOptions, resourceVersion string) (<
 			case event, ok := <-eventCh:
 				if !ok {
 					return
+				}
+
+				// Filter by context filter value
+				if s.contextFilterKey != nil {
+					if event.ContextFilterValue != filterValue {
+						continue
+					}
 				}
 
 				// Filter by namespace

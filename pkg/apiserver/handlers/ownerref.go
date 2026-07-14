@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -12,7 +13,7 @@ import (
 
 // validateOwnerReferences validates that all owner references point to existing objects
 // in the same namespace. Cross-namespace owner references are not allowed.
-func (h *ResourceHandler) validateOwnerReferences(obj client.Object) error {
+func (h *ResourceHandler) validateOwnerReferences(ctx context.Context, obj client.Object) error {
 	accessor, err := meta.Accessor(obj)
 	if err != nil {
 		return err
@@ -26,7 +27,7 @@ func (h *ResourceHandler) validateOwnerReferences(obj client.Object) error {
 	namespace := accessor.GetNamespace()
 
 	for _, ownerRef := range ownerRefs {
-		_, err := h.store.Get(namespace, ownerRef.Name)
+		_, err := h.store.Get(ctx, namespace, ownerRef.Name)
 		if err != nil {
 			if errors.IsNotFound(err) {
 				return errors.NewBadRequest(fmt.Sprintf(
@@ -78,9 +79,9 @@ func validateOwnerReferencesFromMap(namespace string, objMap map[string]interfac
 
 // removeOwnerReferencesFromDependents removes the specified owner from all dependent objects.
 // This is used for orphan deletion where dependents should survive owner deletion.
-func (h *ResourceHandler) removeOwnerReferencesFromDependents(namespace, name string, ownerUID string) error {
+func (h *ResourceHandler) removeOwnerReferencesFromDependents(ctx context.Context, namespace, name string, ownerUID string) error {
 	// List all objects
-	list, err := h.store.List(storage.ListOptions{Namespace: namespace})
+	list, err := h.store.List(ctx, storage.ListOptions{Namespace: namespace})
 	if err != nil {
 		return fmt.Errorf("failed to list objects: %w", err)
 	}
@@ -125,7 +126,7 @@ func (h *ResourceHandler) removeOwnerReferencesFromDependents(namespace, name st
 		if updated {
 			accessor.SetOwnerReferences(newOwnerRefs)
 			obj.GetObjectKind().SetGroupVersionKind(h.gvk)
-			if err := h.store.Update(obj); err != nil {
+			if err := h.store.Update(ctx, obj); err != nil {
 				h.logger.Error(err, "Failed to orphan dependent",
 					"dependent", accessor.GetName(),
 					"owner", name)
@@ -138,9 +139,9 @@ func (h *ResourceHandler) removeOwnerReferencesFromDependents(namespace, name st
 
 // deleteDependents deletes all objects that have the specified owner in their ownerReferences.
 // This is used for foreground and background cascade deletion.
-func (h *ResourceHandler) deleteDependents(namespace, name string, ownerUID string) error {
+func (h *ResourceHandler) deleteDependents(ctx context.Context, namespace, name string, ownerUID string) error {
 	// List all objects
-	list, err := h.store.List(storage.ListOptions{Namespace: namespace})
+	list, err := h.store.List(ctx, storage.ListOptions{Namespace: namespace})
 	if err != nil {
 		return fmt.Errorf("failed to list objects: %w", err)
 	}
@@ -181,7 +182,7 @@ func (h *ResourceHandler) deleteDependents(namespace, name string, ownerUID stri
 				"dependent", accessor.GetName(),
 				"owner", name)
 
-			if err := h.store.Delete(namespace, accessor.GetName()); err != nil {
+			if err := h.store.Delete(ctx, namespace, accessor.GetName()); err != nil {
 				if !errors.IsNotFound(err) {
 					h.logger.Error(err, "Failed to cascade delete dependent",
 						"dependent", accessor.GetName(),

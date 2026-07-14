@@ -56,7 +56,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, token string) (*UserIn
 
 	// List all secrets to find matching token
 	// In production, this should be optimized with indexing
-	secretList, err := a.secretStore.List(storage.ListOptions{})
+	secretList, err := a.secretStore.List(ctx, storage.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list secrets: %w", err)
 	}
@@ -96,7 +96,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, token string) (*UserIn
 	}
 
 	// Verify ServiceAccount exists
-	saObj, err := a.serviceAccountStore.Get(matchedSecret.GetNamespace(), saName)
+	saObj, err := a.serviceAccountStore.Get(ctx, matchedSecret.GetNamespace(), saName)
 	if err != nil {
 		return nil, fmt.Errorf("service account not found: %w", err)
 	}

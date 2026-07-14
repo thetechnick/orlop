@@ -37,6 +37,13 @@ func NewQueryBuilder(tableName string, columns ...string) *QueryBuilder {
 	}
 }
 
+// ArgNum returns the next parameter number that will be used.
+// This is useful for callers that need to construct conditions with
+// the correct parameter placeholder before calling Where.
+func (qb *QueryBuilder) ArgNum() int {
+	return qb.argNum
+}
+
 // Where adds a WHERE condition with parameters.
 // Returns the parameter placeholder numbers used.
 func (qb *QueryBuilder) Where(condition string, args ...interface{}) *QueryBuilder {

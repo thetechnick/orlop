@@ -138,14 +138,14 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	clientObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Validate owner references exist
-	if err := h.validateOwnerReferences(clientObj); err != nil {
+	if err := h.validateOwnerReferences(r.Context(), clientObj); err != nil {
 		h.logger.V(1).Info("Owner reference validation failed", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "error", err)
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid ownerReferences: %v", err))
 		return
 	}
 
 	// Store object
-	if err := h.store.Create(clientObj); err != nil {
+	if err := h.store.Create(r.Context(), clientObj); err != nil {
 		h.logger.Error(err, "Create failed", "kind", h.gvk.Kind, "namespace", namespace, "name", accessor.GetName())
 		if errors.IsAlreadyExists(err) {
 			writeError(w, http.StatusConflict, err.Error())
@@ -170,7 +170,7 @@ func (h *ResourceHandler) Get(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, constants.URLParamName)
 	h.logger.V(1).Info("Get request", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
-	obj, err := h.store.Get(namespace, name)
+	obj, err := h.store.Get(r.Context(), namespace, name)
 	if err != nil {
 		h.logger.Error(err, "Get failed", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 		if errors.IsNotFound(err) {
@@ -251,7 +251,7 @@ func (h *ResourceHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	list, err := h.store.List(opts)
+	list, err := h.store.List(r.Context(), opts)
 	if err != nil {
 		if namespace == "" {
 			h.logger.Error(err, "List failed", "kind", h.gvk.Kind, "scope", "cluster")
@@ -301,7 +301,7 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	h.logger.V(1).Info("Update request", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Get existing object to compare spec
-	existing, err := h.store.Get(namespace, name)
+	existing, err := h.store.Get(r.Context(), namespace, name)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -382,7 +382,7 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 		// If object is being deleted and all finalizers are removed, perform hard delete
 		if len(accessor.GetFinalizers()) == 0 {
-			if err := h.store.Delete(namespace, name); err != nil {
+			if err := h.store.Delete(r.Context(), namespace, name); err != nil {
 				h.logger.Error(err, "Failed to hard delete after finalizers removed", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 				if errors.IsNotFound(err) {
 					writeError(w, http.StatusNotFound, err.Error())
@@ -415,14 +415,14 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	clientObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Validate owner references exist
-	if err := h.validateOwnerReferences(clientObj); err != nil {
+	if err := h.validateOwnerReferences(r.Context(), clientObj); err != nil {
 		h.logger.V(1).Info("Owner reference validation failed", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "error", err)
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid ownerReferences: %v", err))
 		return
 	}
 
 	// Update object
-	if err := h.store.Update(clientObj); err != nil {
+	if err := h.store.Update(r.Context(), clientObj); err != nil {
 		h.logger.Error(err, "Update failed", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -476,7 +476,7 @@ func (h *ResourceHandler) ApplyPatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get existing object (if it exists)
-	existing, err := h.store.Get(namespace, name)
+	existing, err := h.store.Get(r.Context(), namespace, name)
 	if err != nil && !errors.IsNotFound(err) {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get object: %v", err))
 		return
@@ -508,7 +508,7 @@ func (h *ResourceHandler) ApplyPatch(w http.ResponseWriter, r *http.Request) {
 		accessor.SetCreationTimestamp(metav1.Time{Time: time.Now()})
 		accessor.SetGeneration(1)
 
-		if err := h.store.Create(result); err != nil {
+		if err := h.store.Create(r.Context(), result); err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create object: %v", err))
 			return
 		}
@@ -520,7 +520,7 @@ func (h *ResourceHandler) ApplyPatch(w http.ResponseWriter, r *http.Request) {
 		h.logger.Info("Created via apply", "namespace", namespace, "name", name, "fieldManager", fieldManager)
 	} else {
 		// This is an update via apply
-		if err := h.store.Update(result); err != nil {
+		if err := h.store.Update(r.Context(), result); err != nil {
 			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to update object: %v", err))
 			return
 		}
@@ -543,7 +543,7 @@ func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	h.logger.V(1).Info("Delete request", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Get the existing object to check for finalizers
-	existing, err := h.store.Get(namespace, name)
+	existing, err := h.store.Get(r.Context(), namespace, name)
 	if err != nil {
 		h.logger.Error(err, "Delete failed - get object", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 		if errors.IsNotFound(err) {
@@ -585,14 +585,14 @@ func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		case "Orphan":
 			// Remove this owner from all dependent objects
 			h.logger.Info("Orphaning dependents", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "policy", propagationPolicy)
-			if err := h.removeOwnerReferencesFromDependents(namespace, name, ownerUID); err != nil {
+			if err := h.removeOwnerReferencesFromDependents(r.Context(), namespace, name, ownerUID); err != nil {
 				h.logger.Error(err, "Failed to orphan dependents", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 			}
 
 		case "Foreground":
 			// Delete dependents synchronously before deleting this object
 			h.logger.Info("Cascade deleting dependents (foreground)", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "policy", propagationPolicy)
-			if err := h.deleteDependents(namespace, name, ownerUID); err != nil {
+			if err := h.deleteDependents(r.Context(), namespace, name, ownerUID); err != nil {
 				h.logger.Error(err, "Failed to delete dependents", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 			}
 
@@ -612,7 +612,7 @@ func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			existing.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 			// Update the object with deletionTimestamp
-			if err := h.store.Update(existing); err != nil {
+			if err := h.store.Update(r.Context(), existing); err != nil {
 				h.logger.Error(err, "Delete failed - update with deletionTimestamp", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 				if errors.IsConflict(err) {
 					writeError(w, http.StatusConflict, err.Error())
@@ -635,7 +635,7 @@ func (h *ResourceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Hard delete: no finalizers or already marked for deletion
-	if err := h.store.Delete(namespace, name); err != nil {
+	if err := h.store.Delete(r.Context(), namespace, name); err != nil {
 		h.logger.Error(err, "Delete failed - hard delete", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())

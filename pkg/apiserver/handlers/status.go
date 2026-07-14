@@ -26,7 +26,7 @@ func (h *ResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get existing object
-	existing, err := h.store.Get(namespace, name)
+	existing, err := h.store.Get(r.Context(), namespace, name)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -77,7 +77,7 @@ func (h *ResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	clientObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Update in storage
-	if err := h.store.Update(clientObj); err != nil {
+	if err := h.store.Update(r.Context(), clientObj); err != nil {
 		h.logger.Error(err, "Update status failed", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())

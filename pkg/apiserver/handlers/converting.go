@@ -149,7 +149,7 @@ func (h *ConvertingResourceHandler) Create(w http.ResponseWriter, r *http.Reques
 	privateObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Store private object (cast to client.Object)
-	if err := h.store.Create(privateObj.(client.Object)); err != nil {
+	if err := h.store.Create(r.Context(), privateObj.(client.Object)); err != nil {
 		h.logger.Error(err, "Create failed (converting)", "kind", h.gvk.Kind, "namespace", namespace, "name", accessor.GetName())
 		if errors.IsAlreadyExists(err) {
 			writeError(w, http.StatusConflict, err.Error())
@@ -182,7 +182,7 @@ func (h *ConvertingResourceHandler) Get(w http.ResponseWriter, r *http.Request) 
 	h.logger.V(1).Info("Get request (converting)", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Get private object from storage
-	privateObj, err := h.store.Get(namespace, name)
+	privateObj, err := h.store.Get(r.Context(), namespace, name)
 	if err != nil {
 		h.logger.Error(err, "Get failed (converting)", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 		if errors.IsNotFound(err) {
@@ -238,7 +238,7 @@ func (h *ConvertingResourceHandler) List(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Get private objects list from storage
-	privateList, err := h.store.List(opts)
+	privateList, err := h.store.List(r.Context(), opts)
 	if err != nil {
 		if namespace == "" {
 			h.logger.Error(err, "List failed (converting)", "kind", h.gvk.Kind, "scope", "cluster")
@@ -299,7 +299,7 @@ func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.R
 	ctx := applyWatchTimeout(r.Context(), config.timeoutSeconds)
 
 	// Start watch
-	eventCh, stop, err := h.store.Watch(opts, config.resourceVersion)
+	eventCh, stop, err := h.store.Watch(ctx, opts, config.resourceVersion)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to start watch: %v", err))
 		return
@@ -309,7 +309,7 @@ func (h *ConvertingResourceHandler) handleWatch(w http.ResponseWriter, r *http.R
 	// Get current resource version and check if list is empty
 	var currentRV string
 	var isEmpty bool
-	list, err := h.store.List(opts)
+	list, err := h.store.List(ctx, opts)
 	if err == nil {
 		currentRV = list.GetResourceVersion()
 		items, _ := meta.ExtractList(list)
@@ -341,7 +341,7 @@ func (h *ConvertingResourceHandler) Update(w http.ResponseWriter, r *http.Reques
 	h.logger.V(1).Info("Update request (converting)", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Get existing private object
-	existingPrivate, err := h.store.Get(namespace, name)
+	existingPrivate, err := h.store.Get(r.Context(), namespace, name)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -425,7 +425,7 @@ func (h *ConvertingResourceHandler) Update(w http.ResponseWriter, r *http.Reques
 	privateObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Update object in storage (cast to client.Object)
-	if err := h.store.Update(privateObj.(client.Object)); err != nil {
+	if err := h.store.Update(r.Context(), privateObj.(client.Object)); err != nil {
 		h.logger.Error(err, "Update failed (converting)", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -455,7 +455,7 @@ func (h *ConvertingResourceHandler) Patch(w http.ResponseWriter, r *http.Request
 	h.logger.V(1).Info("[PATCH-CONVERTING] %s namespace=%s name=%s content-type=%s", h.gvk.Kind, namespace, name, contentType)
 
 	// Get existing private object
-	existingPrivate, err := h.store.Get(namespace, name)
+	existingPrivate, err := h.store.Get(r.Context(), namespace, name)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -562,7 +562,7 @@ func (h *ConvertingResourceHandler) Patch(w http.ResponseWriter, r *http.Request
 	privateObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Update object in storage (cast to client.Object)
-	if err := h.store.Update(privateObj.(client.Object)); err != nil {
+	if err := h.store.Update(r.Context(), privateObj.(client.Object)); err != nil {
 		h.logger.V(1).Info("[PATCH-CONVERTING] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -590,7 +590,7 @@ func (h *ConvertingResourceHandler) Delete(w http.ResponseWriter, r *http.Reques
 	name := chi.URLParam(r, constants.URLParamName)
 	h.logger.V(1).Info("[DELETE-CONVERTING] %s namespace=%s name=%s", h.gvk.Kind, namespace, name)
 
-	existing, err := h.store.Get(namespace, name)
+	existing, err := h.store.Get(r.Context(), namespace, name)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -607,7 +607,7 @@ func (h *ConvertingResourceHandler) Delete(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	if err := h.store.Delete(namespace, name); err != nil {
+	if err := h.store.Delete(r.Context(), namespace, name); err != nil {
 		h.logger.V(1).Info("[DELETE-CONVERTING] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -648,7 +648,7 @@ func (h *ConvertingResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.
 	}
 
 	// Get existing private object
-	existingPrivate, err := h.store.Get(namespace, name)
+	existingPrivate, err := h.store.Get(r.Context(), namespace, name)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())
@@ -699,7 +699,7 @@ func (h *ConvertingResourceHandler) UpdateStatus(w http.ResponseWriter, r *http.
 	updatedPrivate.GetObjectKind().SetGroupVersionKind(h.gvk)
 
 	// Update in storage
-	if err := h.store.Update(updatedPrivate); err != nil {
+	if err := h.store.Update(r.Context(), updatedPrivate); err != nil {
 		h.logger.V(1).Info("[UPDATE-STATUS-CONVERTING] %s namespace=%s name=%s error=%v", h.gvk.Kind, namespace, name, err)
 		if errors.IsNotFound(err) {
 			writeError(w, http.StatusNotFound, err.Error())

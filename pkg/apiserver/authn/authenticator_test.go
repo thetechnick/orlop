@@ -200,6 +200,7 @@ func TestAuthenticator_Authenticate(t *testing.T) {
 	setupAuthenticator := func(t *testing.T) (*Authenticator, string) {
 		t.Helper()
 
+		ctx := context.Background()
 		scheme := newTestScheme()
 		saStore := newServiceAccountStore(scheme)
 		secretStore := newSecretStore(scheme)
@@ -214,7 +215,7 @@ func TestAuthenticator_Authenticate(t *testing.T) {
 		sa.SetNamespace("test-ns")
 		sa.SetUID(types.UID("sa-uid-001"))
 
-		if err := saStore.Create(sa); err != nil {
+		if err := saStore.Create(ctx, sa); err != nil {
 			t.Fatalf("failed to create ServiceAccount: %v", err)
 		}
 
@@ -229,7 +230,7 @@ func TestAuthenticator_Authenticate(t *testing.T) {
 
 		token := string(secret.Data[TokenKey])
 
-		if err := secretStore.Create(secret); err != nil {
+		if err := secretStore.Create(ctx, secret); err != nil {
 			t.Fatalf("failed to create Secret: %v", err)
 		}
 

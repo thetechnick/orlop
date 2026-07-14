@@ -22,7 +22,8 @@ const (
 
 // ResourceEvent represents a resource change event with its resource version.
 type ResourceEvent struct {
-	Type            EventType
-	Object          client.Object
-	ResourceVersion string
+	Type               EventType
+	Object             client.Object
+	ResourceVersion    string
+	ContextFilterValue string // set by stores with context filtering configured
 }

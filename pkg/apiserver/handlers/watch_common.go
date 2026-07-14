@@ -47,7 +47,8 @@ func applyWatchTimeout(ctx context.Context, timeoutSeconds string) context.Conte
 		return ctx
 	}
 
-	ctxWithTimeout, _ := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	_ = cancel // cancel is handled by the parent context or watch stop
 	return ctxWithTimeout
 }
 
@@ -188,7 +189,7 @@ func streamWatch(
 
 	// Send initial events if requested
 	if config.sendInitialEvents {
-		list, err := store.List(listOpts)
+		list, err := store.List(ctx, listOpts)
 		if err == nil {
 			items, _ := meta.ExtractList(list)
 			for _, item := range items {

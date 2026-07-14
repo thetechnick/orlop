@@ -82,7 +82,7 @@ func (a *Authorizer) Authorize(ctx context.Context, attrs Attributes) (Decision,
 // checkClusterRoleBindings checks cluster-level role bindings.
 func (a *Authorizer) checkClusterRoleBindings(ctx context.Context, attrs Attributes) (Decision, error) {
 	// List all ClusterRoleBindings
-	bindingList, err := a.clusterRoleBindingStore.List(storage.ListOptions{})
+	bindingList, err := a.clusterRoleBindingStore.List(ctx, storage.ListOptions{})
 	if err != nil {
 		return DecisionNoOpinion, fmt.Errorf("failed to list cluster role bindings: %w", err)
 	}
@@ -103,7 +103,7 @@ func (a *Authorizer) checkClusterRoleBindings(ctx context.Context, attrs Attribu
 			continue
 		}
 
-		role, err := a.clusterRoleStore.Get("", binding.RoleRef.Name)
+		role, err := a.clusterRoleStore.Get(ctx, "", binding.RoleRef.Name)
 		if err != nil {
 			continue // Skip if role not found
 		}
@@ -126,7 +126,7 @@ func (a *Authorizer) checkClusterRoleBindings(ctx context.Context, attrs Attribu
 // checkRoleBindings checks namespace-level role bindings.
 func (a *Authorizer) checkRoleBindings(ctx context.Context, attrs Attributes) (Decision, error) {
 	// List RoleBindings in the namespace
-	bindingList, err := a.roleBindingStore.List(storage.ListOptions{
+	bindingList, err := a.roleBindingStore.List(ctx, storage.ListOptions{
 		Namespace: attrs.Namespace,
 	})
 	if err != nil {
@@ -147,7 +147,7 @@ func (a *Authorizer) checkRoleBindings(ctx context.Context, attrs Attributes) (D
 		// Get the referenced role (Role or ClusterRole)
 		var rules []rbacv1.PolicyRule
 		if binding.RoleRef.Kind == "Role" {
-			role, err := a.roleStore.Get(attrs.Namespace, binding.RoleRef.Name)
+			role, err := a.roleStore.Get(ctx, attrs.Namespace, binding.RoleRef.Name)
 			if err != nil {
 				continue
 			}
@@ -157,7 +157,7 @@ func (a *Authorizer) checkRoleBindings(ctx context.Context, attrs Attributes) (D
 			}
 			rules = r.Rules
 		} else if binding.RoleRef.Kind == "ClusterRole" {
-			role, err := a.clusterRoleStore.Get("", binding.RoleRef.Name)
+			role, err := a.clusterRoleStore.Get(ctx, "", binding.RoleRef.Name)
 			if err != nil {
 				continue
 			}

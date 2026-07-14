@@ -82,9 +82,10 @@ func runOneGCCycle(stores map[string]storage.ResourceStore) {
 }
 
 func TestCollector_ObjectWithoutOwnerRefs_NotDeleted(t *testing.T) {
+	ctx := context.Background()
 	store := newTestMemoryStore("objects")
 	obj := newObj("standalone", "default")
-	if err := store.Create(obj); err != nil {
+	if err := store.Create(ctx, obj); err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
 
@@ -94,24 +95,25 @@ func TestCollector_ObjectWithoutOwnerRefs_NotDeleted(t *testing.T) {
 	runOneGCCycle(stores)
 
 	// Object should still exist
-	_, err := store.Get("default", "standalone")
+	_, err := store.Get(ctx, "default", "standalone")
 	if err != nil {
 		t.Errorf("object without owner refs was deleted: %v", err)
 	}
 }
 
 func TestCollector_ObjectWithValidOwnerRef_NotDeleted(t *testing.T) {
+	ctx := context.Background()
 	store := newTestMemoryStore("objects")
 
 	// Create the owner
 	owner := newObj("my-owner", "default")
-	if err := store.Create(owner); err != nil {
+	if err := store.Create(ctx, owner); err != nil {
 		t.Fatalf("Create owner failed: %v", err)
 	}
 
 	// Create a dependent that references the owner
 	dependent := newObjWithOwnerRef("my-dependent", "default", "my-owner", "TestObject", "owner1")
-	if err := store.Create(dependent); err != nil {
+	if err := store.Create(ctx, dependent); err != nil {
 		t.Fatalf("Create dependent failed: %v", err)
 	}
 
@@ -121,18 +123,19 @@ func TestCollector_ObjectWithValidOwnerRef_NotDeleted(t *testing.T) {
 	runOneGCCycle(stores)
 
 	// Dependent should still exist because its owner exists
-	_, err := store.Get("default", "my-dependent")
+	_, err := store.Get(ctx, "default", "my-dependent")
 	if err != nil {
 		t.Errorf("object with valid owner ref was deleted: %v", err)
 	}
 }
 
 func TestCollector_ObjectWithMissingOwnerRef_Deleted(t *testing.T) {
+	ctx := context.Background()
 	store := newTestMemoryStore("objects")
 
 	// Create a dependent whose owner does not exist
 	dependent := newObjWithOwnerRef("orphan", "default", "nonexistent-owner", "TestObject", "missing")
-	if err := store.Create(dependent); err != nil {
+	if err := store.Create(ctx, dependent); err != nil {
 		t.Fatalf("Create dependent failed: %v", err)
 	}
 
@@ -142,31 +145,32 @@ func TestCollector_ObjectWithMissingOwnerRef_Deleted(t *testing.T) {
 	runOneGCCycle(stores)
 
 	// Orphan should be deleted because its owner does not exist
-	_, err := store.Get("default", "orphan")
+	_, err := store.Get(ctx, "default", "orphan")
 	if err == nil {
 		t.Error("orphaned object was not deleted by garbage collector")
 	}
 }
 
 func TestCollector_MultipleStoresScanned(t *testing.T) {
+	ctx := context.Background()
 	storeA := newTestMemoryStore("kindA")
 	storeB := newTestMemoryStore("kindB")
 
 	// Create an owner in storeA
 	owner := newObj("owner-a", "default")
-	if err := storeA.Create(owner); err != nil {
+	if err := storeA.Create(ctx, owner); err != nil {
 		t.Fatalf("Create owner in storeA failed: %v", err)
 	}
 
 	// Create a dependent in storeB whose owner is in storeA
 	dependentValid := newObjWithOwnerRef("dep-valid", "default", "owner-a", "KindA", "a1")
-	if err := storeB.Create(dependentValid); err != nil {
+	if err := storeB.Create(ctx, dependentValid); err != nil {
 		t.Fatalf("Create valid dependent failed: %v", err)
 	}
 
 	// Create an orphan in storeA (owner does not exist in any store)
 	orphan := newObjWithOwnerRef("orphan-a", "default", "ghost", "KindX", "x1")
-	if err := storeA.Create(orphan); err != nil {
+	if err := storeA.Create(ctx, orphan); err != nil {
 		t.Fatalf("Create orphan failed: %v", err)
 	}
 
@@ -177,17 +181,17 @@ func TestCollector_MultipleStoresScanned(t *testing.T) {
 	runOneGCCycle(stores)
 
 	// The valid dependent should still exist (owner found in storeA)
-	if _, err := storeB.Get("default", "dep-valid"); err != nil {
+	if _, err := storeB.Get(ctx, "default", "dep-valid"); err != nil {
 		t.Errorf("valid dependent in storeB was incorrectly deleted: %v", err)
 	}
 
 	// The orphan should be deleted (owner not found in any store)
-	if _, err := storeA.Get("default", "orphan-a"); err == nil {
+	if _, err := storeA.Get(ctx, "default", "orphan-a"); err == nil {
 		t.Error("orphaned object in storeA was not deleted by garbage collector")
 	}
 
 	// The owner itself should still exist (no owner refs on it)
-	if _, err := storeA.Get("default", "owner-a"); err != nil {
+	if _, err := storeA.Get(ctx, "default", "owner-a"); err != nil {
 		t.Errorf("owner object was incorrectly deleted: %v", err)
 	}
 }

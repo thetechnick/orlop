@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
@@ -19,7 +20,7 @@ func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, op
 	ctx := applyWatchTimeout(r.Context(), config.timeoutSeconds)
 
 	// Start watch
-	eventCh, stop, err := h.store.Watch(opts, config.resourceVersion)
+	eventCh, stop, err := h.store.Watch(ctx, opts, config.resourceVersion)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("failed to start watch: %v", err))
 		return
@@ -27,7 +28,7 @@ func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, op
 	defer stop()
 
 	// Get current resource version
-	currentRV, isEmpty := h.getCurrentResourceVersion(opts)
+	currentRV, isEmpty := h.getCurrentResourceVersion(ctx, opts)
 
 	// Set up streaming response
 	streamer, err := newWatchStreamer(w, h.gvk, currentRV, isEmpty)
@@ -41,8 +42,8 @@ func (h *ResourceHandler) handleWatch(w http.ResponseWriter, r *http.Request, op
 
 
 // getCurrentResourceVersion retrieves the current resource version from the store
-func (h *ResourceHandler) getCurrentResourceVersion(opts storage.ListOptions) (string, bool) {
-	list, err := h.store.List(opts)
+func (h *ResourceHandler) getCurrentResourceVersion(ctx context.Context, opts storage.ListOptions) (string, bool) {
+	list, err := h.store.List(ctx, opts)
 	if err != nil {
 		return "0", true
 	}
