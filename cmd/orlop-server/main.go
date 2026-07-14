@@ -78,18 +78,22 @@ func main() {
 	}
 
 	opts := apiserver.Options{
-		Address:           address,
-		PrivatePort:       privatePort,
-		PublicPort:        publicPort,
-		CORSOrigins:       origins,
-		EnablePublicAPI:   enablePublic,
-		PrivateRegistry:   privateRegistry,
-		PrivateMiddleware: middleware,
-		PublicMiddleware:  middleware,
-		PublicResources:   getPublicResources(),
-		PrivateScheme:     privateScheme,
-		PublicScheme:      getPublicScheme(),
-		Logger:            logger,
+		Address:     address,
+		CORSOrigins: origins,
+		Private: apiserver.PrivateAPIOptions{
+			Port:       privatePort,
+			Registry:   privateRegistry,
+			Scheme:     privateScheme,
+			Middleware: middleware,
+		},
+		Public: apiserver.PublicAPIOptions{
+			Enable:     enablePublic,
+			Port:       publicPort,
+			Resources:  getPublicResources(),
+			Scheme:     getPublicScheme(),
+			Middleware: middleware,
+		},
+		Logger: logger,
 	}
 
 	server, err := apiserver.New(opts)

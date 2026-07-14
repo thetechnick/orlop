@@ -21,23 +21,33 @@ type Server struct {
 	logger        logr.Logger
 }
 
+// PrivateAPIOptions holds configuration for the private API server.
+type PrivateAPIOptions struct {
+	Port       int
+	Registry   *ResourceRegistry                  // Optional: pre-built registry (skips Resources/Scheme/StorageFactory)
+	Resources  []ResourceInfo
+	Scheme     *runtime.Scheme
+	Middleware []func(http.Handler) http.Handler
+	Prefix     string                             // Optional: prefix for private labels/annotations/conditions filtered during conversion (defaults to conversion.DefaultPrivatePrefix)
+}
+
+// PublicAPIOptions holds configuration for the public API server.
+type PublicAPIOptions struct {
+	Enable     bool
+	Port       int
+	Resources  []ResourceInfo
+	Scheme     *runtime.Scheme
+	Middleware []func(http.Handler) http.Handler
+}
+
 // Options holds server configuration.
 type Options struct {
-	Address         string
-	PrivatePort     int
-	PublicPort      int
-	CORSOrigins     []string
-	EnablePublicAPI bool
-	PrivateRegistry  *ResourceRegistry                  // Optional: pre-built registry for private API (skips PrivateResources/PrivateScheme/StorageFactory)
-	PrivateResources []ResourceInfo
-	PublicResources  []ResourceInfo
-	PrivateScheme    *runtime.Scheme
-	PublicScheme     *runtime.Scheme
-	PrivatePrefix    string                             // Optional: prefix for private labels/annotations/conditions filtered during conversion (defaults to conversion.DefaultPrivatePrefix)
-	PrivateMiddleware []func(http.Handler) http.Handler // Optional: custom middleware applied to the private API server
-	PublicMiddleware  []func(http.Handler) http.Handler // Optional: custom middleware applied to the public API server
-	StorageFactory    StorageFactory                    // Optional: custom storage factory (defaults to in-memory)
-	Logger            logr.Logger                       // Optional: logger for server operations (defaults to discard logger)
+	Address        string
+	CORSOrigins    []string
+	Private        PrivateAPIOptions
+	Public         PublicAPIOptions
+	StorageFactory StorageFactory // Optional: custom storage factory (defaults to in-memory)
+	Logger         logr.Logger    // Optional: logger for server operations (defaults to discard logger)
 }
 
 // New creates a new API server with the given options.
@@ -53,30 +63,30 @@ func New(opts Options) (*Server, error) {
 	}
 	registryOpts = append(registryOpts, WithLogger(logger))
 
-	privateRegistry := opts.PrivateRegistry
+	privateRegistry := opts.Private.Registry
 	if privateRegistry == nil {
-		if opts.PrivateScheme == nil {
+		if opts.Private.Scheme == nil {
 			return nil, fmt.Errorf("private scheme is required")
 		}
-		if len(opts.PrivateResources) == 0 {
+		if len(opts.Private.Resources) == 0 {
 			return nil, fmt.Errorf("at least one private resource is required")
 		}
 
-		privateRegistry = NewResourceRegistry(opts.PrivateScheme, registryOpts...)
-		for _, res := range opts.PrivateResources {
+		privateRegistry = NewResourceRegistry(opts.Private.Scheme, registryOpts...)
+		for _, res := range opts.Private.Resources {
 			if err := privateRegistry.Register(res); err != nil {
 				return nil, fmt.Errorf("failed to register private resource %s: %w", res.Plural, err)
 			}
 		}
 	}
 
-	privateRouter, err := setupRouter(privateRegistry, opts.CORSOrigins, opts.PrivateMiddleware)
+	privateRouter, err := setupRouter(privateRegistry, opts.CORSOrigins, opts.Private.Middleware)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup private router: %w", err)
 	}
 
 	privateServer := &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", opts.Address, opts.PrivatePort),
+		Addr:    fmt.Sprintf("%s:%d", opts.Address, opts.Private.Port),
 		Handler: privateRouter,
 	}
 
@@ -87,29 +97,29 @@ func New(opts Options) (*Server, error) {
 		logger:        logger,
 	}
 
-	if opts.EnablePublicAPI {
-		if opts.PublicScheme == nil {
-			return nil, fmt.Errorf("public scheme is required when EnablePublicAPI is true")
+	if opts.Public.Enable {
+		if opts.Public.Scheme == nil {
+			return nil, fmt.Errorf("public scheme is required when Public.Enable is true")
 		}
-		if len(opts.PublicResources) == 0 {
-			return nil, fmt.Errorf("public resources are required when EnablePublicAPI is true")
+		if len(opts.Public.Resources) == 0 {
+			return nil, fmt.Errorf("public resources are required when Public.Enable is true")
 		}
 
-		publicRegistry := NewResourceRegistry(opts.PublicScheme, registryOpts...)
-		for _, res := range opts.PublicResources {
+		publicRegistry := NewResourceRegistry(opts.Public.Scheme, registryOpts...)
+		for _, res := range opts.Public.Resources {
 			if err := publicRegistry.Register(res); err != nil {
 				return nil, fmt.Errorf("failed to register public resource %s: %w", res.Plural, err)
 			}
 		}
 
-		converter := conversion.NewConverter(opts.PublicScheme, opts.PrivateScheme, opts.PrivatePrefix)
-		publicRouter, err := setupConvertingRouter(publicRegistry, privateRegistry, converter, opts.PrivateScheme, opts.CORSOrigins, opts.PublicMiddleware)
+		converter := conversion.NewConverter(opts.Public.Scheme, opts.Private.Scheme, opts.Private.Prefix)
+		publicRouter, err := setupConvertingRouter(publicRegistry, privateRegistry, converter, opts.Private.Scheme, opts.CORSOrigins, opts.Public.Middleware)
 		if err != nil {
 			return nil, fmt.Errorf("failed to setup public router: %w", err)
 		}
 
 		publicServer := &http.Server{
-			Addr:    fmt.Sprintf("%s:%d", opts.Address, opts.PublicPort),
+			Addr:    fmt.Sprintf("%s:%d", opts.Address, opts.Public.Port),
 			Handler: publicRouter,
 		}
 
@@ -131,7 +141,7 @@ func (s *Server) Run() error {
 	}()
 
 	// Start public API server if enabled
-	if s.options.EnablePublicAPI && s.publicServer != nil {
+	if s.options.Public.Enable && s.publicServer != nil {
 		s.logger.Info("Public API server listening", "addr", s.publicServer.Addr)
 		return s.publicServer.ListenAndServe()
 	}

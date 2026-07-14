@@ -56,13 +56,16 @@ func TestMain(m *testing.M) {
 
 	// Start server on random port
 	opts := apiserver.Options{
-		Address:          "127.0.0.1",
-		PrivatePort:      8765, // Use fixed port for testing
-		PublicPort:       8766,
-		CORSOrigins:      []string{"*"},
-		EnablePublicAPI:  false, // Disable public API for existing tests
-		PrivateResources: privateResources,
-		PrivateScheme:    scheme,
+		Address:     "127.0.0.1",
+		CORSOrigins: []string{"*"},
+		Private: apiserver.PrivateAPIOptions{
+			Port:      8765, // Use fixed port for testing
+			Resources: privateResources,
+			Scheme:    scheme,
+		},
+		Public: apiserver.PublicAPIOptions{
+			Port: 8766,
+		},
 	}
 
 	var err error

@@ -29,16 +29,19 @@ func ExamplePostgreSQLStorage() {
 		import "github.com/thetechnick/orlop/pkg/apiserver"
 
 		server, err := apiserver.New(apiserver.Options{
-			Address:          "0.0.0.0",
-			PrivatePort:      8080,
-			PublicPort:       8081,
-			EnablePublicAPI:  true,
-			PrivateScheme:    privateScheme,
-			PublicScheme:     publicScheme,
-			PrivateResources: privateResources,
-			PublicResources:  publicResources,
-			// Use custom storage factory
-			StorageFactory:   storageFactory,
+			Address: "0.0.0.0",
+			Private: apiserver.PrivateAPIOptions{
+				Port:      8080,
+				Scheme:    privateScheme,
+				Resources: privateResources,
+			},
+			Public: apiserver.PublicAPIOptions{
+				Enable:    true,
+				Port:      8081,
+				Scheme:    publicScheme,
+				Resources: publicResources,
+			},
+			StorageFactory: storageFactory,
 		})
 		if err != nil {
 			panic(err)
@@ -56,14 +59,18 @@ func ExampleMemoryStorage() {
 	// Note: This example assumes you have privateScheme and resources defined
 	/*
 		server, err := apiserver.New(apiserver.Options{
-			Address:          "0.0.0.0",
-			PrivatePort:      8080,
-			PublicPort:       8081,
-			EnablePublicAPI:  true,
-			PrivateScheme:    privateScheme,
-			PublicScheme:     publicScheme,
-			PrivateResources: privateResources,
-			PublicResources:  publicResources,
+			Address: "0.0.0.0",
+			Private: apiserver.PrivateAPIOptions{
+				Port:      8080,
+				Scheme:    privateScheme,
+				Resources: privateResources,
+			},
+			Public: apiserver.PublicAPIOptions{
+				Enable:    true,
+				Port:      8081,
+				Scheme:    publicScheme,
+				Resources: publicResources,
+			},
 			// StorageFactory not specified - uses in-memory by default
 		})
 		if err != nil {
@@ -86,12 +93,13 @@ func ExampleCustomStorage() {
 		}
 
 		server, err := apiserver.New(apiserver.Options{
-			Address:          "0.0.0.0",
-			PrivatePort:      8080,
-			EnablePublicAPI:  false,
-			PrivateScheme:    privateScheme,
-			PrivateResources: privateResources,
-			StorageFactory:   customFactory,
+			Address: "0.0.0.0",
+			Private: apiserver.PrivateAPIOptions{
+				Port:      8080,
+				Scheme:    privateScheme,
+				Resources: privateResources,
+			},
+			StorageFactory: customFactory,
 		})
 		if err != nil {
 			panic(err)

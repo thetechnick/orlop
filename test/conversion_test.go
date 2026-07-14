@@ -69,15 +69,19 @@ func ensureConversionTestServer(t *testing.T) {
 
 	// Start server with both private and public APIs
 	opts := apiserver.Options{
-		Address:          "127.0.0.1",
-		PrivatePort:      9003, // Different ports from other tests
-		PublicPort:       9004,
-		CORSOrigins:      []string{"*"},
-		EnablePublicAPI:  true,
-		PrivateResources: privateResources,
-		PublicResources:  publicResources,
-		PrivateScheme:    privateScheme,
-		PublicScheme:     publicScheme,
+		Address:     "127.0.0.1",
+		CORSOrigins: []string{"*"},
+		Private: apiserver.PrivateAPIOptions{
+			Port:      9003, // Different ports from other tests
+			Resources: privateResources,
+			Scheme:    privateScheme,
+		},
+		Public: apiserver.PublicAPIOptions{
+			Enable:    true,
+			Port:      9004,
+			Resources: publicResources,
+			Scheme:    publicScheme,
+		},
 	}
 
 	var err error
