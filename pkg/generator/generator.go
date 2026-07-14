@@ -178,15 +178,15 @@ func (g *Generator) analyzeFile(inputPath string) error {
 		return err
 	}
 
-	packageName := file.Name.Name
+	pkgDir := filepath.Dir(inputPath)
 
 	// Track if this package has +orlop:public marker
 	if g.hasPackagePublicMarker(file) {
-		g.publicPackages[packageName] = true
+		g.publicPackages[pkgDir] = true
 	}
 
 	// Check if package has been marked public (by any file in the package)
-	if !g.publicPackages[packageName] {
+	if !g.publicPackages[pkgDir] {
 		// Skip this file if package hasn't been marked public yet
 		return nil
 	}
@@ -368,11 +368,10 @@ func (g *Generator) processFile(inputPath, outputPath string) error {
 	}
 
 	baseName := filepath.Base(inputPath)
-
-	packageName := file.Name.Name
+	pkgDir := filepath.Dir(inputPath)
 
 	// Check if package has been marked public (by any file in the package)
-	if !g.publicPackages[packageName] {
+	if !g.publicPackages[pkgDir] {
 		// Skip this file if package is not marked public
 		return nil
 	}
@@ -409,6 +408,20 @@ func (g *Generator) processFile(inputPath, outputPath string) error {
 }
 
 func (g *Generator) processAggregatorFile(inputPath, outputPath string) error {
+	pkgDir := filepath.Dir(inputPath)
+
+	// Check if any sub-package under this directory has the public marker
+	hasPublicChild := false
+	for dir := range g.publicPackages {
+		if strings.HasPrefix(dir, pkgDir+string(filepath.Separator)) {
+			hasPublicChild = true
+			break
+		}
+	}
+	if !hasPublicChild {
+		return nil
+	}
+
 	file, err := parser.ParseFile(g.fset, inputPath, nil, parser.ParseComments)
 	if err != nil {
 		return err
