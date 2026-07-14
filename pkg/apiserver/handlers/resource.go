@@ -77,6 +77,12 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate cross-namespace owner references before schema processing
+	if err := validateOwnerReferencesFromMap(namespace, objMap); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid ownerReferences: %v", err))
+		return
+	}
+
 	// Process object (prune, default, validate)
 	if errs := h.processor.Process(objMap); len(errs) > 0 {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("validation failed: %v", errs.ToAggregate()))
@@ -131,7 +137,7 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Set GVK
 	clientObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
-	// Validate owner references
+	// Validate owner references exist
 	if err := h.validateOwnerReferences(clientObj); err != nil {
 		h.logger.V(1).Info("Owner reference validation failed", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "error", err)
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid ownerReferences: %v", err))
@@ -311,6 +317,12 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate cross-namespace owner references before schema processing
+	if err := validateOwnerReferencesFromMap(namespace, objMap); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid ownerReferences: %v", err))
+		return
+	}
+
 	// Process object (prune, default, validate)
 	if errs := h.processor.Process(objMap); len(errs) > 0 {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("validation failed: %v", errs.ToAggregate()))
@@ -401,7 +413,7 @@ func (h *ResourceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Set GVK
 	clientObj.GetObjectKind().SetGroupVersionKind(h.gvk)
 
-	// Validate owner references
+	// Validate owner references exist
 	if err := h.validateOwnerReferences(clientObj); err != nil {
 		h.logger.V(1).Info("Owner reference validation failed", "kind", h.gvk.Kind, "namespace", namespace, "name", name, "error", err)
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid ownerReferences: %v", err))

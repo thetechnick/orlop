@@ -10,7 +10,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// validateOwnerReferences validates that all owner references point to existing objects.
+// validateOwnerReferences validates that all owner references point to existing objects
+// in the same namespace. Cross-namespace owner references are not allowed.
 func (h *ResourceHandler) validateOwnerReferences(obj client.Object) error {
 	accessor, err := meta.Accessor(obj)
 	if err != nil {
@@ -25,9 +26,6 @@ func (h *ResourceHandler) validateOwnerReferences(obj client.Object) error {
 	namespace := accessor.GetNamespace()
 
 	for _, ownerRef := range ownerRefs {
-		// Check if the owner exists
-		// In a full implementation, we'd need to map Kind to the correct store
-		// For now, we check in the same store (same resource type)
 		_, err := h.store.Get(namespace, ownerRef.Name)
 		if err != nil {
 			if errors.IsNotFound(err) {
@@ -39,6 +37,42 @@ func (h *ResourceHandler) validateOwnerReferences(obj client.Object) error {
 		}
 	}
 
+	return nil
+}
+
+// validateOwnerReferencesFromMap checks that no owner reference in the raw JSON map
+// points to a different namespace than the object.
+func validateOwnerReferencesFromMap(namespace string, objMap map[string]interface{}) error {
+	metadata, ok := objMap["metadata"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	ownerRefsRaw, ok := metadata["ownerReferences"]
+	if !ok {
+		return nil
+	}
+	ownerRefs, ok := ownerRefsRaw.([]interface{})
+	if !ok {
+		return nil
+	}
+	for _, refRaw := range ownerRefs {
+		ref, ok := refRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		ownerNS, ok := ref["namespace"]
+		if !ok {
+			continue
+		}
+		nsStr, _ := ownerNS.(string)
+		if nsStr != "" && nsStr != namespace {
+			name, _ := ref["name"].(string)
+			kind, _ := ref["kind"].(string)
+			return errors.NewBadRequest(fmt.Sprintf(
+				"ownerReference %s/%s (kind=%s) is in a different namespace than the object (%s), cross-namespace owner references are not allowed",
+				nsStr, name, kind, namespace))
+		}
+	}
 	return nil
 }
 

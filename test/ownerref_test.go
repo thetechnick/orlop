@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -501,4 +502,144 @@ func TestUpdateOwnerReferenceValidation(t *testing.T) {
 	json.Unmarshal(body, &status)
 
 	t.Logf("Got expected error on update: %s", status.Message)
+}
+
+// TestCrossNamespaceOwnerReferenceRejected tests that owner references pointing
+// to a different namespace are rejected on both Create and Update.
+func TestCrossNamespaceOwnerReferenceRejected(t *testing.T) {
+	namespace := "default"
+
+	spec := map[string]interface{}{
+		"publicField":   "value",
+		"internalField": "value",
+		"nested": map[string]interface{}{
+			"publicField":   "nested-value",
+			"internalField": "nested-value",
+		},
+	}
+
+	// Create should reject cross-namespace owner reference
+	body := map[string]interface{}{
+		"apiVersion": "test.orlop.thetechnick.ninja/v1",
+		"kind":       "Object",
+		"metadata": map[string]interface{}{
+			"name":      "cross-ns-child",
+			"namespace": namespace,
+			"ownerReferences": []map[string]interface{}{
+				{
+					"apiVersion": "test.orlop.thetechnick.ninja/v1",
+					"kind":       "Object",
+					"name":       "some-owner",
+					"uid":        "fake-uid",
+					"namespace":  "other-namespace",
+				},
+			},
+		},
+		"spec": spec,
+	}
+
+	bodyJSON, _ := json.Marshal(body)
+	resp, err := http.Post(
+		baseURL+"/apis/test.orlop.thetechnick.ninja/v1/namespaces/"+namespace+"/objects",
+		"application/json",
+		bytes.NewBuffer(bodyJSON),
+	)
+	if err != nil {
+		t.Fatalf("Create request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		respBody, _ := io.ReadAll(resp.Body)
+		t.Fatalf("Expected 400 Bad Request for cross-namespace owner reference, got %d: %s", resp.StatusCode, respBody)
+	}
+
+	var status metav1.Status
+	respBody, _ := io.ReadAll(resp.Body)
+	json.Unmarshal(respBody, &status)
+
+	if status.Status != metav1.StatusFailure {
+		t.Errorf("expected status 'Failure', got %s", status.Status)
+	}
+	if !strings.Contains(status.Message, "cross-namespace owner references are not allowed") {
+		t.Errorf("expected cross-namespace error message, got: %s", status.Message)
+	}
+	t.Logf("Create correctly rejected: %s", status.Message)
+
+	// Create an object without owner references first
+	plainBody := map[string]interface{}{
+		"apiVersion": "test.orlop.thetechnick.ninja/v1",
+		"kind":       "Object",
+		"metadata": map[string]interface{}{
+			"name":      "cross-ns-update-target",
+			"namespace": namespace,
+		},
+		"spec": spec,
+	}
+
+	plainJSON, _ := json.Marshal(plainBody)
+	createResp, err := http.Post(
+		baseURL+"/apis/test.orlop.thetechnick.ninja/v1/namespaces/"+namespace+"/objects",
+		"application/json",
+		bytes.NewBuffer(plainJSON),
+	)
+	if err != nil {
+		t.Fatalf("Create request failed: %v", err)
+	}
+	defer createResp.Body.Close()
+
+	if createResp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(createResp.Body)
+		t.Fatalf("Expected 201 Created, got %d: %s", createResp.StatusCode, respBody)
+	}
+
+	// Update should also reject cross-namespace owner reference
+	updateBody := map[string]interface{}{
+		"apiVersion": "test.orlop.thetechnick.ninja/v1",
+		"kind":       "Object",
+		"metadata": map[string]interface{}{
+			"name":      "cross-ns-update-target",
+			"namespace": namespace,
+			"ownerReferences": []map[string]interface{}{
+				{
+					"apiVersion": "test.orlop.thetechnick.ninja/v1",
+					"kind":       "Object",
+					"name":       "some-owner",
+					"uid":        "fake-uid",
+					"namespace":  "other-namespace",
+				},
+			},
+		},
+		"spec": spec,
+	}
+
+	updateJSON, _ := json.Marshal(updateBody)
+	req, err := http.NewRequest(http.MethodPut,
+		baseURL+"/apis/test.orlop.thetechnick.ninja/v1/namespaces/"+namespace+"/objects/cross-ns-update-target",
+		bytes.NewBuffer(updateJSON),
+	)
+	if err != nil {
+		t.Fatalf("Failed to create update request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	updateResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Update request failed: %v", err)
+	}
+	defer updateResp.Body.Close()
+
+	if updateResp.StatusCode != http.StatusBadRequest {
+		respBody, _ := io.ReadAll(updateResp.Body)
+		t.Fatalf("Expected 400 Bad Request for cross-namespace owner reference on update, got %d: %s", updateResp.StatusCode, respBody)
+	}
+
+	var updateStatus metav1.Status
+	updateRespBody, _ := io.ReadAll(updateResp.Body)
+	json.Unmarshal(updateRespBody, &updateStatus)
+
+	if !strings.Contains(updateStatus.Message, "cross-namespace owner references are not allowed") {
+		t.Errorf("expected cross-namespace error message, got: %s", updateStatus.Message)
+	}
+	t.Logf("Update correctly rejected: %s", updateStatus.Message)
 }

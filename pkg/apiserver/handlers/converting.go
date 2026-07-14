@@ -75,6 +75,11 @@ func (h *ConvertingResourceHandler) Create(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if err := validateOwnerReferencesFromMap(namespace, objMap); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid ownerReferences: %v", err))
+		return
+	}
+
 	// Process object (prune, default, validate) using public schema
 	if errs := h.processor.Process(objMap); len(errs) > 0 {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("validation failed: %v", errs.ToAggregate()))
@@ -349,6 +354,11 @@ func (h *ConvertingResourceHandler) Update(w http.ResponseWriter, r *http.Reques
 	var objMap map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&objMap); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		return
+	}
+
+	if err := validateOwnerReferencesFromMap(namespace, objMap); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid ownerReferences: %v", err))
 		return
 	}
 
