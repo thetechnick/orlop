@@ -39,6 +39,8 @@ type Options struct {
 	PrivateScheme      *runtime.Scheme
 	PublicScheme       *runtime.Scheme
 	PrivatePrefix      string         // Optional: prefix for private labels/annotations/conditions filtered during conversion (defaults to conversion.DefaultPrivatePrefix)
+	PrivateMiddleware []func(http.Handler) http.Handler // Optional: custom middleware applied to the private API server
+	PublicMiddleware  []func(http.Handler) http.Handler // Optional: custom middleware applied to the public API server
 	StorageFactory     StorageFactory // Optional: custom storage factory (defaults to in-memory)
 	Logger             logr.Logger    // Optional: logger for server operations (defaults to discard logger)
 }
@@ -96,7 +98,7 @@ func New(opts Options) (*Server, error) {
 		logger.Info("RBAC authorization enabled")
 	}
 
-	privateRouter, err := setupRouter(privateRegistry, opts.CORSOrigins, authnMiddleware, rbacMiddleware)
+	privateRouter, err := setupRouter(privateRegistry, opts.CORSOrigins, authnMiddleware, rbacMiddleware, opts.PrivateMiddleware)
 	if err != nil {
 		return nil, fmt.Errorf("failed to setup private router: %w", err)
 	}
@@ -133,7 +135,7 @@ func New(opts Options) (*Server, error) {
 
 		converter := conversion.NewConverter(opts.PublicScheme, opts.PrivateScheme, opts.PrivatePrefix)
 		// Pass private registry so converting handlers can access the shared stores
-		publicRouter, err := setupConvertingRouter(publicRegistry, privateRegistry, converter, opts.PrivateScheme, opts.CORSOrigins, authnMiddleware, rbacMiddleware)
+		publicRouter, err := setupConvertingRouter(publicRegistry, privateRegistry, converter, opts.PrivateScheme, opts.CORSOrigins, authnMiddleware, rbacMiddleware, opts.PublicMiddleware)
 		if err != nil {
 			return nil, fmt.Errorf("failed to setup public router: %w", err)
 		}
