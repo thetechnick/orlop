@@ -1,10 +1,10 @@
 package handlers
 
 import (
-	"github.com/thetechnick/orlop/pkg/apiserver/constants"
 	"encoding/json"
 	"net/http"
 
+	"github.com/thetechnick/orlop/pkg/apiserver/constants"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )

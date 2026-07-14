@@ -78,12 +78,28 @@ type MemoryStore struct {
 }
 
 // Create creates a new resource.
+// If obj.GetName() is empty and obj.GetGenerateName() is set,
+// a unique name is generated atomically under the lock.
 func (s *MemoryStore) Create(obj client.Object) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	namespace := obj.GetNamespace()
 	name := obj.GetName()
+
+	if name == "" && obj.GetGenerateName() != "" {
+		for range 5 {
+			candidate := storage.GenerateName(obj.GetGenerateName())
+			if _, exists := s.objects[s.makeKey(namespace, candidate)]; !exists {
+				name = candidate
+				obj.SetName(name)
+				break
+			}
+		}
+		if name == "" {
+			return fmt.Errorf("failed to generate unique name after retries")
+		}
+	}
 
 	key := s.makeKey(namespace, name)
 

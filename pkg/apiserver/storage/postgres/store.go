@@ -133,63 +133,82 @@ func (s *PostgresStore) nextResourceVersion() int64 {
 }
 
 // Create implements ResourceStore.
+// If obj.GetName() is empty and obj.GetGenerateName() is set,
+// a unique name is generated with retry on duplicate key violations.
 func (s *PostgresStore) Create(obj client.Object) error {
 	ctx := context.Background()
 
 	namespace := obj.GetNamespace()
 	name := obj.GetName()
+	useGenerateName := name == "" && obj.GetGenerateName() != ""
 
-	// Set resource version
-	rv := s.nextResourceVersion()
-	obj.SetResourceVersion(strconv.FormatInt(rv, 10))
-
-	// Set timestamps if not set
-	now := time.Now()
-	creationTime := obj.GetCreationTimestamp()
-	if creationTime.IsZero() {
-		obj.SetCreationTimestamp(metav1.NewTime(now))
+	maxAttempts := 1
+	if useGenerateName {
+		maxAttempts = 5
 	}
 
-	// Serialize to JSON
-	data, err := json.Marshal(obj)
-	if err != nil {
-		return fmt.Errorf("failed to marshal object: %w", err)
-	}
-
-	// Serialize labels
-	labelsJSON, err := json.Marshal(obj.GetLabels())
-	if err != nil {
-		return fmt.Errorf("failed to marshal labels: %w", err)
-	}
-
-	// Insert into database
-	query := fmt.Sprintf(`
-		INSERT INTO %s (namespace, name, resource_version, labels, data)
-		VALUES ($1, $2, $3, $4, $5)
-	`, s.tableName)
-
-	_, err = s.db.ExecContext(ctx, query, namespace, name, rv, labelsJSON, data)
-	if err != nil {
-		// Check for unique constraint violation
-		if isDuplicateKeyError(err) {
-			return errors.NewAlreadyExists(
-				schema.GroupResource{Resource: s.resourceType},
-				name,
-			)
+	for attempt := range maxAttempts {
+		if useGenerateName {
+			name = storage.GenerateName(obj.GetGenerateName())
+			obj.SetName(name)
 		}
-		return fmt.Errorf("failed to insert object: %w", err)
+
+		// Set resource version
+		rv := s.nextResourceVersion()
+		obj.SetResourceVersion(strconv.FormatInt(rv, 10))
+
+		// Set timestamps if not set
+		now := time.Now()
+		creationTime := obj.GetCreationTimestamp()
+		if creationTime.IsZero() {
+			obj.SetCreationTimestamp(metav1.NewTime(now))
+		}
+
+		// Serialize to JSON
+		data, err := json.Marshal(obj)
+		if err != nil {
+			return fmt.Errorf("failed to marshal object: %w", err)
+		}
+
+		// Serialize labels
+		labelsJSON, err := json.Marshal(obj.GetLabels())
+		if err != nil {
+			return fmt.Errorf("failed to marshal labels: %w", err)
+		}
+
+		// Insert into database
+		query := fmt.Sprintf(`
+			INSERT INTO %s (namespace, name, resource_version, labels, data)
+			VALUES ($1, $2, $3, $4, $5)
+		`, s.tableName)
+
+		_, err = s.db.ExecContext(ctx, query, namespace, name, rv, labelsJSON, data)
+		if err != nil {
+			if isDuplicateKeyError(err) {
+				if useGenerateName && attempt < maxAttempts-1 {
+					continue
+				}
+				return errors.NewAlreadyExists(
+					schema.GroupResource{Resource: s.resourceType},
+					name,
+				)
+			}
+			return fmt.Errorf("failed to insert object: %w", err)
+		}
+
+		// Broadcast event
+		if s.broadcaster != nil {
+			s.broadcaster.Broadcast(storage.ResourceEvent{
+				Type:            storage.EventAdded,
+				Object:          obj.DeepCopyObject().(client.Object),
+				ResourceVersion: strconv.FormatInt(rv, 10),
+			})
+		}
+
+		return nil
 	}
 
-	// Broadcast event
-	if s.broadcaster != nil {
-		s.broadcaster.Broadcast(storage.ResourceEvent{
-			Type:            storage.EventAdded,
-			Object:          obj.DeepCopyObject().(client.Object),
-			ResourceVersion: strconv.FormatInt(rv, 10),
-		})
-	}
-
-	return nil
+	return fmt.Errorf("failed to generate unique name after retries")
 }
 
 // Get implements ResourceStore.

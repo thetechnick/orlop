@@ -124,8 +124,8 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := accessor.GetName()
-	if name == "" {
-		writeError(w, http.StatusBadRequest, "metadata.name is required")
+	if name == "" && accessor.GetGenerateName() == "" {
+		writeError(w, http.StatusBadRequest, "metadata.name or metadata.generateName is required")
 		return
 	}
 
@@ -146,7 +146,7 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Store object
 	if err := h.store.Create(clientObj); err != nil {
-		h.logger.Error(err, "Create failed", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
+		h.logger.Error(err, "Create failed", "kind", h.gvk.Kind, "namespace", namespace, "name", accessor.GetName())
 		if errors.IsAlreadyExists(err) {
 			writeError(w, http.StatusConflict, err.Error())
 		} else {
@@ -155,6 +155,7 @@ func (h *ResourceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	name = accessor.GetName()
 	h.logger.Info("Created", "kind", h.gvk.Kind, "namespace", namespace, "name", name)
 
 	// Return created object

@@ -30,6 +30,8 @@ type ShardSelector struct {
 // Uses client.Object which combines metav1.Object and runtime.Object.
 type ResourceStore interface {
 	// Create creates a new resource.
+	// If obj.GetName() is empty and obj.GetGenerateName() is set,
+	// the store must generate a unique name and set it on obj before persisting.
 	Create(obj client.Object) error
 
 	// Get retrieves a resource by namespace and name.

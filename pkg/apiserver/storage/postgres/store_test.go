@@ -59,6 +59,13 @@ func withSpec(spec map[string]interface{}) objectOption {
 	}
 }
 
+func withGenerateName(generateName string) objectOption {
+	return func(obj *unstructured.Unstructured) {
+		obj.SetGenerateName(generateName)
+		obj.SetName("")
+	}
+}
+
 // setupTestDB creates a test database connection and cleans up after the test
 func setupTestDB(t *testing.T) (*sql.DB, func()) {
 	// Get connection string from environment or use default
@@ -192,6 +199,59 @@ func TestPostgresStore_Create(t *testing.T) {
 		}
 		if _, err := store.Get("ns2", "obj"); err != nil {
 			t.Error("Object in ns2 not found")
+		}
+	})
+
+	t.Run("generateName produces a unique name", func(t *testing.T) {
+		store, cleanup := setupTestStore(t)
+		defer cleanup()
+
+		obj := newTestObject(withGenerateName("gen-"), withNamespace("default"))
+
+		err := store.Create(obj)
+		if err != nil {
+			t.Fatalf("Create() with generateName failed: %v", err)
+		}
+
+		name := obj.GetName()
+		if name == "" {
+			t.Fatal("Name was not set after Create with generateName")
+		}
+		if len(name) < len("gen-")+5 {
+			t.Errorf("Generated name too short: %q", name)
+		}
+
+		retrieved, err := store.Get("default", name)
+		if err != nil {
+			t.Fatalf("Get() by generated name failed: %v", err)
+		}
+		if retrieved.GetName() != name {
+			t.Errorf("Retrieved name %q != generated name %q", retrieved.GetName(), name)
+		}
+	})
+
+	t.Run("generateName creates distinct names", func(t *testing.T) {
+		store, cleanup := setupTestStore(t)
+		defer cleanup()
+
+		seen := make(map[string]bool)
+
+		for range 20 {
+			obj := newTestObject(withGenerateName("multi-"), withNamespace("default"))
+			if err := store.Create(obj); err != nil {
+				t.Fatalf("Create() failed: %v", err)
+			}
+			name := obj.GetName()
+			if seen[name] {
+				t.Fatalf("Duplicate generated name: %q", name)
+			}
+			seen[name] = true
+		}
+
+		listObj, _ := store.List(storage.ListOptions{Namespace: "default"})
+		list := listObj.(*unstructured.UnstructuredList)
+		if len(list.Items) != 20 {
+			t.Errorf("Expected 20 objects, got %d", len(list.Items))
 		}
 	})
 

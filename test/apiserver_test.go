@@ -1723,6 +1723,81 @@ func TestClusterScopedList(t *testing.T) {
 
 // Helper functions
 
+func TestGenerateName(t *testing.T) {
+	namespace := "default"
+
+	spec := map[string]interface{}{
+		"publicField":   "value",
+		"internalField": "value",
+		"nested": map[string]interface{}{
+			"publicField":   "nested-value",
+			"internalField": "nested-value",
+		},
+	}
+
+	// Create with generateName and no name
+	payload := map[string]interface{}{
+		"apiVersion": "test.orlop.thetechnick.ninja/v1",
+		"kind":       "Object",
+		"metadata": map[string]interface{}{
+			"generateName": "gen-test-",
+		},
+		"spec": spec,
+	}
+
+	resp, body := doRequest(t, "POST", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", namespace), payload)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Expected 201 Created, got %d: %s", resp.StatusCode, body)
+	}
+
+	var created map[string]interface{}
+	json.Unmarshal([]byte(body), &created)
+	metadata := created["metadata"].(map[string]interface{})
+	name := metadata["name"].(string)
+
+	if len(name) <= len("gen-test-") {
+		t.Fatalf("Expected generated name longer than prefix, got %q", name)
+	}
+	if name[:len("gen-test-")] != "gen-test-" {
+		t.Fatalf("Expected name to start with 'gen-test-', got %q", name)
+	}
+	t.Logf("Generated name: %s", name)
+
+	// Verify the object can be retrieved by the generated name
+	resp, body = doRequest(t, "GET", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects/%s", namespace, name), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK for GET by generated name, got %d: %s", resp.StatusCode, body)
+	}
+
+	// Create a second object with the same prefix to verify uniqueness
+	resp, body = doRequest(t, "POST", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", namespace), payload)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("Expected 201 Created for second object, got %d: %s", resp.StatusCode, body)
+	}
+
+	var created2 map[string]interface{}
+	json.Unmarshal([]byte(body), &created2)
+	name2 := created2["metadata"].(map[string]interface{})["name"].(string)
+
+	if name2 == name {
+		t.Fatalf("Expected different generated names, both got %q", name)
+	}
+	t.Logf("Second generated name: %s", name2)
+
+	// Create without name or generateName should fail
+	noNamePayload := map[string]interface{}{
+		"apiVersion": "test.orlop.thetechnick.ninja/v1",
+		"kind":       "Object",
+		"metadata":   map[string]interface{}{},
+		"spec":       spec,
+	}
+
+	resp, body = doRequest(t, "POST", fmt.Sprintf("/apis/test.orlop.thetechnick.ninja/v1/namespaces/%s/objects", namespace), noNamePayload)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("Expected 400 Bad Request for missing name and generateName, got %d: %s", resp.StatusCode, body)
+	}
+}
+
 func doRequest(t *testing.T, method, path string, body interface{}) (*http.Response, string) {
 	var reqBody io.Reader
 	if body != nil {
